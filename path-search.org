@@ -1,0 +1,1318 @@
+#+TITLE: Path Search
+
+
+
+#+NAME:path-search
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+  # ----------
+  # User Instructions:
+  #
+  # Define a function, search() that returns a list
+  # in the form of [optimal path length, row, col]. For
+  # the grid shown below, your function should output
+  # [11, 4, 5].
+  #
+  # If there is no valid path from the start point
+  # to the goal, your function should return the string
+  # 'fail'
+  # ----------
+
+  # Grid format:
+  #   0 = Navigable space
+  #   1 = Occupied space
+
+  grid = [[0, 0, 1, 0, 0, 0],
+          [0, 0, 1, 0, 0, 0],
+          [0, 0, 0, 0, 1, 0],
+          [0, 0, 1, 1, 1, 0],
+          [0, 0, 0, 0, 1, 0]]
+
+  # grid = [[0, 0, 0, 1 ],
+  #         [0, 1, 0, 0],
+  #         [1, 0, 1, 0]]
+
+  # grid = [[0, 0, 0 ],
+  #         [0, 1, 0],
+  #         [1, 0, 0]]
+
+  cost = 1
+
+  delta = [[-1, 0], # go up
+           [ 0,-1], # go left
+           [ 1, 0], # go down
+           [ 0, 1]] # go right
+
+  delta_name = ['^', '<', 'v', '>']
+
+  def search(grid,init,goal,cost):
+      grid_state = grid.copy()           # grid_state the grid state starting from the initial grid
+      # but mark all explored grid cells
+
+      def move(point, action):
+          x, y = point
+          m, n = action
+          return [x+m, y+n]
+
+      def valid(point):
+          rows = len(grid)
+          columns = len(grid[0])
+          x, y = point
+          return ((0 <= x) and (x < rows) and
+                  (0 <= y) and (y < columns) and
+                  (grid_state[x][y] == 0))
+
+      def reachable_neighbors(point):
+          points = [move(point, action) for action in delta if valid(move(point, action))]
+          return points
+
+      def contains(path, p):
+          return any(x == p for x in path)
+
+      def circle_removed(path, points):
+          filtered = [p for p in points if not contains(path, p)]
+          return filtered
+
+      def arrange_paths(new_paths, paths_not_yet_explored):
+          """
+          Arrange new_paths at the appropriate position relative to paths_not_yet_explored,
+          so that the cost is increasing, note that all elements of new_paths of the same cost.
+          """
+          # Find the position for new_paths
+          position = 0
+          cost_new, _ = new_paths[0]
+          while (position < len(paths_not_yet_explored)) and (paths_not_yet_explored[position][0] < cost_new):
+              position += 1
+          return paths_not_yet_explored[:position] + new_paths + paths_not_yet_explored[position:]
+
+
+      def search_(paths_so_far):
+          if len(paths_so_far) == 0:
+              return 'fail'
+          cost_so_far, path_exploring = paths_so_far[0]  # Assume the path at index 0 is of the lowest cost
+          # explore with the best path
+          exploring_node = path_exploring[-1]
+
+          neighbors = reachable_neighbors(exploring_node)
+          # circle_removed(path_exploring, reachable_neighbors(exploring_node))
+          # Here, need to check if any neighbor appeares in the current path being explored.
+          x, y = exploring_node
+          grid_state[x][y] = 1    # mark the explored cell that it should not be visited anymore
+
+          # evaluate the neighbors
+          if len(neighbors) == 0: # no reachable neighbor
+              return search_(paths_so_far[1:]) # remove the not successful path, recur
+          else: # there is some reachable neighbors, exam if it reaches goal or
+              # update path to continue
+              for neighbor in neighbors:
+                  if neighbor == goal:
+                      x, y = goal
+                      return [cost_so_far + cost, x, y]
+
+              # not yet reaching the goal, update the candidate paths, recur to search
+              new_paths = [[cost_so_far + cost, path_exploring + [ neighbor ]]
+                           # extended the path_exploring by adding the neighbor
+                           for neighbor in neighbors]
+              return search_(arrange_paths(new_paths, paths_so_far[1:]))
+      return search_(
+          [
+              [0, [init]]]             # only one path with one point in the path
+      )
+
+  grid = [
+      [0, 1],
+      [0, 0]]
+  init = [0, 0]
+  goal = [len(grid)-1, len(grid[0])-1]
+
+  print(search(grid, init, goal, cost))
+#+END_SRC
+
+Here my thought process. 
+
+1. It seems a typical recursive process of searching the next steps, carrying the already found path.
+2. For search_, from start find its reachable neighbors, choose the lowest cost one. 
+3. The concept of reachable neighbors: from a grid/point, the neighbors that are navigable, subject to boundary constraints.
+4. Next step, given a set of still possible paths, ordered from the lowest, to the highest, take the lowest, to explore further, at its neighbors, if it reached the goal, return the path, if there is not more move, retract, otherwise, update the possible path, and recur.
+5. Need to remember grid travelled for a particular path to avoid circle! May use a map/dictionary to remember the grids travelled. (It would be nice to have a structure to represet the path and as well as the points travelled with one piece of data.)
+6. The purpose of the path_found, record all the nodes/points traveled, to determine no circle happening.  The cost accumulated so far, the current end of the path. So the path can be modeled as a list/tuple
+[list_nodes_traveled, cost so far], so I need to recomb through the code to adapt to new model of the path found, especially, the initial value of the path_found at the start.
+
+The model of the paths so far should be a list of tuples [cost, list of nodes]
+
+** A second attempt to understand the algorithm of Sebastian's
+
+*** The problem statement: find the shortest path from start to goal
+
+    - In a square matrix
+    - Subject to constraints that some cells are blocked not "open"
+
+*** The algorithm
+
+    Keep a list of nodes to explore, the open list, and a list of explored list, called closed list.
+    1. start with cell "START"., and put "START" into the closed list.
+    2. Check if the cell is the GOAL, if it is then GOAL reached.
+    3. Check all the successors of the end cell/point with the least value in the open list, to see if it's the GOAL, if it's, done. Otherwise continue.
+    4. Put the explored into closed list.
+    5. This list of algorithm may not be completed yet.
+
+Watching from Sebastian's answer, it seems to me that he's not as afraid of inefficiency. He tends to use much higher level abstraction to make to code simpler, and more readable.
+
+#+NAME:path-end-point-search
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+  delta = [[-1, 0], # go up
+           [ 0,-1], # go left
+           [ 1, 0], # go down
+           [ 0, 1]] # go right
+
+  def search(grid, init, goal, cost):
+    closed = grid
+
+    def move(point, action):
+      x, y = point
+      m, n = action
+      return [x+m, y+n]
+
+    def valid(point):
+      rows = len(grid)
+      columns = len(grid[0])
+      x, y = point
+      return ((0 <= x) and (x < rows) and
+              (0 <= y) and (y < columns) and
+              (closed[x][y] == 0))
+
+    def reachable_neighbors(point):
+      points = [move(point, action) for action in delta if valid(move(point, action))]
+      return points
+
+    x, y = init
+    closed[x][y] = 1
+
+    g = 0
+    gx, gy = goal
+    open_list = [[g, x, y]]
+
+    while (open_list):
+      og, ox, oy = open_list[0]       # assume open_list is sorted increasing with the g value
+      if ((ox == gx) and (oy == gy)):
+        return [og, ox, oy]
+      # still need to expand from [ox, oy]
+      neighbors = reachable_neighbors([ox, oy])
+      if neighbors:
+        for neighbor in neighbors:
+          x, y = neighbor
+          closed[x][y] = 1
+          open_list = open_list[1:] + [[og+cost, x, y]]  # assume that this will make it increasing with accumulated cost
+          # The above line is only correct, when cost is constraint.
+          # A correct implementation should be just add open_list.sort after the concatenation.
+          open_list.sort()        # Here is some opportunity to optimize as the list before the concatenation is already sorted. An insert sort would be perfect for performance.
+        # end of for neighbors
+      else:
+        open_list = open_list[1:]
+      # end of if neighbors
+    # end of while, no more element in open_list
+    return 'fail'
+
+  grid = [[0, 0],
+          [1, 0]]
+
+  print(search(grid, [0, 0], [1, 1], 1))
+#+END_SRC
+
+** Implement the expand as a means to show the progress of the path exploration
+
+Add a data structure for expand list, with the same dimension of the grid,
+initialize it to of value -1, and place the g, the accumulated cost,
+when explored at the corresponding cell.
+
+#+NAME:path-with-expand
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+  delta = [[-1, 0], # go up
+           [ 0,-1], # go left
+           [ 1, 0], # go down
+           [ 0, 1]] # go right
+
+  def search(grid, init, goal, cost):
+    from copy import deepcopy
+    closed = deepcopy(grid)
+    expand = deepcopy(grid)
+
+    for x in range(len(grid)):
+      for y in range(len(grid[0])):
+        # print(grid[x][y])
+        expand[x][y] = -1
+        # print(grid[x][y])
+      # end of for cell
+    # end of for rows
+
+    def move(point, action):
+      x, y = point
+      m, n = action
+      return [x+m, y+n]
+
+    def valid(point):
+      rows = len(grid)
+      columns = len(grid[0])
+      x, y = point
+      return ((0 <= x) and (x < rows) and
+              (0 <= y) and (y < columns) and
+              (closed[x][y] == 0))
+
+    def reachable_neighbors(point):
+      points = [move(point, action) for action in delta if valid(move(point, action))]
+      return points
+
+    x, y = init
+    closed[x][y] = 1              # visited
+
+    g = 0
+    gx, gy = goal
+    open_list = [[g, x, y]]
+    expand[x][y] = g              # starting from here
+    found = False
+    resigned = False
+
+    while not found and not resigned:  # while there is still some to explore
+      if open_list:
+        og, ox, oy = open_list[0]       # assume open_list is sorted increasing with the g value
+        if ((ox == gx) and (oy == gy)):
+          expand[ox][oy] = og       # record the steps at the end
+          found = True
+        else: # still need to expand from [ox, oy]
+          neighbors = reachable_neighbors([ox, oy])
+          if neighbors:
+            for neighbor in neighbors:
+              x, y = neighbor
+              closed[x][y] = 1
+              open_list = open_list[1:] + [[og+cost, x, y]]  # assume that this will make it increasing with accumulated cost
+              # The above line is only correct, when cost is constraint.
+              # A correct implementation should be just add open_list.sort after the concatenation.
+              open_list.sort()        # Here is some opportunity to optimize as the list before the concatenation is already sorted. An insert sort would be perfect for performance.
+              expand[x][y] = og+cost
+            # end of for neighbors
+          else:
+            open_list = open_list[1:]
+            # end of if neighbors
+      else:
+        resigned = True
+        # end of if open_list
+      # end of while not found and not resigned
+      if found:
+        for row in expand:
+            print(row)
+        return [og, ox, oy]
+      elif resigned:
+        return 'fail'
+
+  grid = [[0, 0],
+          [1, 0]]
+
+  print(search(grid, [0, 0], [1, 1], 1))
+#+END_SRC
+
+Here is the formal assignment practice upon Sebastian's code provided:
+
+I try to make it better in terms of expressiveness, and naming convention, while keeping the better
+code of Sebastian's.
+
+#+NAME:expand-upon-Sebastian
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+  # -----------
+  # User Instructions:
+  #
+  # Modify the function search so that it returns
+  # a table of values called expand. This table
+  # will keep track of which step each node was
+  # expanded.
+  #
+  # Make sure that the initial cell in the grid
+  # you return has the value 0.
+  # ----------
+
+  grid = [[0, 0, 1, 0, 0, 0],
+          [0, 0, 0, 0, 0, 0],
+          [0, 0, 1, 0, 1, 0],
+          [0, 0, 1, 0, 1, 0],
+          [0, 0, 1, 0, 1, 0]]
+  init = [0, 0]
+  goal = [len(grid)-1, len(grid[0])-1]
+  cost = 1
+
+  delta = [[-1, 0], # go up
+           [ 0,-1], # go left
+           [ 1, 0], # go down
+           [ 0, 1]] # go right
+
+  delta_name = ['^', '<', 'v', '>']
+
+  def search(grid,init,goal,cost):
+      from copy import deepcopy
+      closed = deepcopy(grid)
+      expand = [[-1 for cell in row] for row in grid]  # expand has the same dimensions as grrid, but all elements initialized to -1
+      count = 0
+
+      x, y = init
+      closed[x][y] = 1
+      g = 0
+      open_list = [[g, x, y]]
+
+      found = False  # flag that is set when search is complete
+      resign = False # flag set if we can't find expand
+
+      while not found and not resign:
+          if not open_list:
+              resign = True
+          else:
+              next = open_list.pop(0)  # take the first and return it with the side effect of removing it
+              # will make sure open_list has tuple increasing with accumulated cost
+              g, x, y = next
+              gx, gy = goal
+
+              expand[x][y] = count
+              count += 1
+
+              if x == gx and y == gy:
+                  found = True
+              else:
+                  for m in delta:
+                      mx, my = m
+                      x_new, y_new = x + mx, y + my
+                      if 0 <= x_new and x_new < len(grid) and 0 <= y_new and y_new < len(grid[0]):
+                          if closed[x_new][y_new] == 0:
+                              g_new = g + cost
+                              open_list.append([g_new, x_new, y_new])
+                              open_list.sort()
+                              closed[x_new][y_new] = 1
+                          # end of if closed
+                      # end of if 0 <= x ...
+                  # end of for m
+              # end of if x == gx ...
+          # end of if not open_list
+      # end of while not found and not resign
+      return expand
+  # end of def
+  # grid = [[0, 1],
+  # [0, 0]]
+  # goal = [len(grid)-1, len(grid[0])-1]
+
+  print(search(grid,init,goal,cost))
+#+END_SRC
+
+show the path found in terms of the move direction at each step
+
+Based on the algorithm above for expand sequence,
+remember each move's previous move, then use the previous pointer to reconstruct the path.
+
+#+NAME:draw-path
+#+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
+  # -----------
+  # User Instructions:
+  #
+  # Modify the function search so that it returns
+  # a table of values called expand. This table
+  # will keep track of which step each node was
+  # expanded.
+  #
+  # Make sure that the initial cell in the grid
+  # you return has the value 0.
+  # ----------
+
+  grid = [[0, 0, 1, 0, 0, 0],
+          [0, 0, 0, 0, 0, 0],
+          [0, 0, 1, 0, 1, 0],
+          [0, 0, 1, 0, 1, 0],
+          [0, 0, 1, 0, 1, 0]]
+  init = [0, 0]
+  goal = [len(grid)-1, len(grid[0])-1]
+  cost = 1
+
+  delta = [[-1, 0], # go up
+           [ 0,-1], # go left
+           [ 1, 0], # go down
+           [ 0, 1]] # go right
+
+  delta_name = ['^', '<', 'v', '>']
+
+  def search(grid,init,goal,cost):
+      from copy import deepcopy
+      closed = deepcopy(grid)
+      expand_map = [[' ' for cell in row] for row in grid]
+      # path = []
+      # count = 0
+
+      x, y = init
+      closed[x][y] = 1
+      g = 0
+      open_list = [[g, x, y, None, None]]
+
+      found = False  # flag that is set when search is complete
+      resign = False # flag set if we can't find expand
+
+      while not found and not resign:
+          if not open_list:
+              resign = True
+          else:
+              next = open_list.pop(0)  # take the first and return it with the side effect of removing it
+              # will make sure open_list has tuple increasing with accumulated cost
+              g, x, y, predecessor, action_to_here = next
+              gx, gy = goal
+              if x == gx and y == gy:
+                  expand_map[x][y] = '*'
+                  while predecessor:
+                      action_for_predecessor = action_to_here
+                      _, x, y, predecessor, action_to_here = predecessor
+                      expand_map[x][y] = action_for_predecessor  # this may be off
+                  # end of while not predecessor
+
+                  found = True
+              else:
+                  for i in range(len(delta)):
+                      mx, my = delta[i]
+                      x_new, y_new = x + mx, y + my
+                      if 0 <= x_new and x_new < len(grid) and 0 <= y_new and y_new < len(grid[0]):
+                          if closed[x_new][y_new] == 0:
+                              g_new = g + cost
+                              open_list.append([g_new, x_new, y_new, next, delta_name[i]])
+                              open_list.sort()
+                              closed[x_new][y_new] = 1
+                          # end of if closed
+                      # end of if 0 <= x ...
+                  # end of for m
+              # end of if x == gx ...
+          # end of if not open_list
+      # end of while not found and not resign
+
+      # for i in range(1, len(path)):
+      #     print(path[-i])
+      # #print(path[0])
+      for row in expand_map:
+              print(row)
+
+      return expand_map
+  # end of def
+  # grid = [[0, 1],
+  # [0, 0]]
+  # goal = [len(grid)-1, len(grid[0])-1]
+
+  print(search(grid,init,goal,cost))
+
+#+END_SRC
+
+In the following, it record the index of the action taken to reach a node, with coordinate x, and y.
+
+When it found the goal node, then use the index of the action to retract back to the predecessor node
+from which with the action recorded, it reached the current node.
+The algorithm then mark the predecessor with the action taken.
+
+It's equivalent to mine, but it seems simpler as it use af separate structure to record the actions,
+avoiding the unnecessary handling of the predecessor, and action to here when search for the path.
+
+#+NAME:draw-path-by-retracting-action-recorded-sebastian
+#+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
+  # -----------
+  # User Instructions:
+  #
+  # Modify the function search so that it returns
+  # a table of values called expand. This table
+  # will keep track of which step each node was
+  # expanded.
+  #
+  # Make sure that the initial cell in the grid
+  # you return has the value 0.
+  # ----------
+
+  grid = [[0, 0, 1, 0, 0, 0],
+          [0, 0, 0, 0, 0, 0],
+          [0, 0, 1, 0, 1, 0],
+          [0, 0, 1, 0, 1, 0],
+          [0, 0, 1, 0, 1, 0]]
+  init = [0, 0]
+  goal = [len(grid)-1, len(grid[0])-1]
+  cost = 1
+
+  delta = [[-1, 0], # go up
+           [ 0,-1], # go left
+           [ 1, 0], # go down
+           [ 0, 1]] # go right
+
+  delta_name = ['^', '<', 'v', '>']
+
+  def search(grid,init,goal,cost):
+      from copy import deepcopy
+      closed = deepcopy(grid)
+      policy = [[' ' for cell in row] for row in grid]
+      actions = [[-1 for cell in row] for row in grid]  # the index of the action to the node x, y
+
+      x, y = init
+      closed[x][y] = 1
+      g = 0
+      open_list = [[g, x, y]]
+
+      found = False  # flag that is set when search is complete
+      resign = False # flag set if we can't find expand
+
+      while not found and not resign:
+          if not open_list:
+              resign = True
+          else:
+              next = open_list.pop(0)  # take the first and return it with the side effect of removing it
+              # will make sure open_list has tuple increasing with accumulated cost
+              g, x, y = next
+              gx, gy = goal
+              if x == gx and y == gy:
+                  policy[x][y] = '*'
+                  while x != init[0] or y != init[1]:  # has not yet retracted back to the initial start yet
+                      index_action_to_here = actions[x][y]
+                      mx, my = delta[index_action_to_here]
+                      x_predecessor, y_predecessor = x - mx, y - my  # retract back
+                      action_for_predecessor = delta_name[index_action_to_here]
+                      policy[x_predecessor][y_predecessor] = action_for_predecessor
+                      x, y = x_predecessor, y_predecessor
+                  # end of while x != init[0] and y != init[1]
+                  found = True
+              else:
+                  for i in range(len(delta)):
+                      mx, my = delta[i]
+                      x_new, y_new = x + mx, y + my
+                      if 0 <= x_new and x_new < len(grid) and 0 <= y_new and y_new < len(grid[0]):
+                          if closed[x_new][y_new] == 0:
+                              g_new = g + cost
+                              open_list.append([g_new, x_new, y_new])
+                              open_list.sort()
+                              closed[x_new][y_new] = 1
+                              actions[x_new][y_new] = i
+                          # end of if closed
+                      # end of if 0 <= x ...
+                  # end of for m
+              # end of if x == gx ...
+          # end of if not open_list
+      # end of while not found and not resign
+
+      # for i in range(1, len(path)):
+      #     print(path[-i])
+      # #print(path[0])
+      for row in policy:
+              print(row)
+
+      return policy
+  # end of def
+  # grid = [[0, 1],
+  # [0, 0]]
+  # goal = [len(grid)-1, len(grid[0])-1]
+
+  print(search(grid,init,goal,cost))
+#+END_SRC
+
+** Study of A* search algorithm
+
+   It's more efficient than breadth/width first search in tree structure.
+
+   Perhaps, it takes into considerations of the distance away from the goal?
+
+   Yes, it optimizes by using a heuristic function:
+   of the metrics of distance to the goal.
+
+   Compared with the previous expansion search algorithm, where it use the accumulated cost as the selection function to select the best next node to explore.
+   Now it uses the sum of the accumulated distance and the heuristic function value for node to select the best.
+
+   Usually, the heuristic function can be the Manhattan distance from the node to the goal.
+
+#+NAME:A*
+#+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
+  # -----------
+  # User Instructions:
+  #
+  # Modify the the search function so that it becomes
+  # an A* search algorithm as defined in the previous
+  # lectures.
+  #
+  # Your function should return the expanded grid
+  # which shows, for each element, the count when
+  # it was expanded or -1 if the element was never expanded.
+  #
+  # If there is no path from init to goal,
+  # the function should return the string 'fail'
+  # ----------
+
+  grid = [[0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 0, 0, 0, 1, 0]]
+  heuristic = [[9, 8, 7, 6, 5, 4],
+               [8, 7, 6, 5, 4, 3],
+               [7, 6, 5, 4, 3, 2],
+               [6, 5, 4, 3, 2, 1],
+               [5, 4, 3, 2, 1, 0]]
+
+  init = [0, 0]
+  goal = [len(grid)-1, len(grid[0])-1]
+  cost = 1
+
+  delta = [[-1, 0 ], # go up
+           [ 0, -1], # go left
+           [ 1, 0 ], # go down
+           [ 0, 1 ]] # go right
+
+  delta_name = ['^', '<', 'v', '>']
+
+  def search(grid,init,goal,cost,heuristic):
+      # ----------------------------------------
+      # modify the code below
+      # ----------------------------------------
+      closed = [[0 for col in range(len(grid[0]))] for row in range(len(grid))]
+
+      expand = [[-1 for col in range(len(grid[0]))] for row in range(len(grid))]
+      action = [[-1 for col in range(len(grid[0]))] for row in range(len(grid))]
+
+      x, y = init
+      closed[x][y] = 1
+      g = 0
+      f = 0
+      open = [[f, g, x, y]]
+
+      found = False  # flag that is set when search is complete
+      resign = False # flag set if we can't find expand
+      count = 0
+
+      while not found and not resign:
+          if len(open) == 0:
+              resign = True
+              return "Fail"
+          else:
+              open.sort()
+              open.reverse()
+              next = open.pop()
+              f, g, x, y = next
+              expand[x][y] = count
+              count += 1
+
+              if x == goal[0] and y == goal[1]:
+                  found = True
+              else:
+                  for i in range(len(delta)):
+                      x2 = x + delta[i][0]
+                      y2 = y + delta[i][1]
+                      if x2 >= 0 and x2 < len(grid) and y2 >=0 and y2 < len(grid[0]):
+                          if closed[x2][y2] == 0 and grid[x2][y2] == 0:
+                              g2 = g + cost
+                              f2 = g2 + heuristic[x2][y2]
+                              open.append([f2, g2, x2, y2])
+                              closed[x2][y2] = 1
+      for row in expand:
+          print(row)
+      return expand
+  # grid = [[0, 0],
+  # [0, 0]]
+  goal = [len(grid)-1, len(grid[0])-1]
+  search(grid,init,goal,cost,heuristic)
+#+END_SRC
+
+Here is my version slightly improving the performance, mainly avoiding the reverse operation on the open list of expansion of cells.
+
+#+NAME:A*-improved
+#+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
+  # -----------
+  # User Instructions:
+  #
+  # Modify the the search function so that it becomes
+  # an A* search algorithm as defined in the previous
+  # lectures.
+  #
+  # Your function should return the expanded grid
+  # which shows, for each element, the count when
+  # it was expanded or -1 if the element was never expanded.
+  #
+  # If there is no path from init to goal,
+  # the function should return the string 'fail'
+  # ----------
+
+  grid = [[0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 0, 0, 0, 1, 0]]
+  heuristic = [[9, 8, 7, 6, 5, 4],
+               [8, 7, 6, 5, 4, 3],
+               [7, 6, 5, 4, 3, 2],
+               [6, 5, 4, 3, 2, 1],
+               [5, 4, 3, 2, 1, 0]]
+
+  init = [0, 0]
+  goal = [len(grid)-1, len(grid[0])-1]
+  cost = 1
+
+  delta = [[-1, 0 ], # go up
+           [ 0, -1], # go left
+           [ 1, 0 ], # go down
+           [ 0, 1 ]] # go right
+
+  delta_name = ['^', '<', 'v', '>']
+
+  def search(grid,init,goal,cost,heuristic):
+      # ----------------------------------------
+      # modify the code below
+      # ----------------------------------------
+      closed = [[0 for col in range(len(grid[0]))] for row in range(len(grid))]
+
+      expand = [[-1 for col in range(len(grid[0]))] for row in range(len(grid))]
+      action = [[-1 for col in range(len(grid[0]))] for row in range(len(grid))]
+
+      x, y = init
+      closed[x][y] = 1
+      g = 0
+      f = 0
+      open = [[f, g, x, y]]
+
+      found = False  # flag that is set when search is complete
+      resign = False # flag set if we can't find expand
+      count = 0
+
+      while not found and not resign:
+          if len(open) == 0:
+              resign = True
+              return "Fail"
+          else:
+              next = open.pop(0)
+              f, g, x, y = next
+              expand[x][y] = count
+              count += 1
+
+              if x == goal[0] and y == goal[1]:
+                  found = True
+              else:
+                  for i in range(len(delta)):
+                      x2 = x + delta[i][0]
+                      y2 = y + delta[i][1]
+                      if x2 >= 0 and x2 < len(grid) and y2 >=0 and y2 < len(grid[0]):
+                          if closed[x2][y2] == 0 and grid[x2][y2] == 0:
+                              g2 = g + cost
+                              f2 = g2 + heuristic[x2][y2]
+                              open.append([f2, g2, x2, y2])
+                              open.sort()  # sort while it's just inserted to be more efficient
+                              closed[x2][y2] = 1
+      for row in expand:
+          print(row)
+      return expand
+  # grid = [[0, 0],
+  # [0, 0]]
+  goal = [len(grid)-1, len(grid[0])-1]
+  search(grid,init,goal,cost,heuristic)
+#+END_SRC
+
+** Use dynamic programming as an alternative for path search/planning
+
+**** Compute the shortest path's steps to the goal
+
+   A more general solution, given map, and goal, provide the shortest path from any location to the goal.
+
+   It's a necessity to be able to generate path from any starting position, as the road environment may have
+   random factors, thus making the starting position stochastic.
+
+   It's more computation expensive.
+
+   The algorithm:
+
+   Starting from the goal, compute the cost of reaching the goal from any cell.
+   It can be recursively expressed as $f$ cost to the goal
+
+
+\begin{eqnarray}
+\label{eq:1}
+ cost(x, y) = min_{x', y'} cost(x', y') + cost&  & \\
+\end{eqnarray}
+
+where $x'$ and $y'$ are the reachable neighbors of $x$, $y$
+
+Here is the thought process of the algorithm, starting from the goal, and
+propagate to the neighbors, recursively.
+
+Update neighbors' value, once a cell's value is reduced.
+Stops, when there is no more opportunity to reduce.
+
+#+NAME:distances-to-goal
+#+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
+  # ----------
+  # User Instructions:
+  #
+  # Create a function compute_value which returns
+  # a grid of values. The value of a cell is the minimum
+  # number of moves required to get from the cell to the goal.
+  #
+  # If a cell is a wall or it is impossible to reach the goal from a cell,
+  # assign that cell a value of 99.
+  # ----------
+
+  grid = [[0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 0, 0, 0, 1, 0]]
+  goal = [len(grid)-1, len(grid[0])-1]
+  cost = 1 # the cost associated with moving from a cell to an adjacent one
+
+  delta = [[-1, 0 ], # go up
+           [ 0, -1], # go left
+           [ 1, 0 ], # go down
+           [ 0, 1 ]] # go right
+
+  delta_name = ['^', '<', 'v', '>']
+
+  def compute_value(grid,goal,cost):
+      # ----------------------------------------
+      # insert code below
+      # ----------------------------------------
+
+      # make sure your function returns a grid of values as
+      # demonstrated in the previous video.
+      value = [[99 for cell in row] for row in grid]  # initialized to be extremely large
+      xg, yg = goal
+      value[xg][yg] = 0
+      seeds = [[xg, yg]]
+
+      while seeds:
+          x_s, y_s = seeds.pop(0)  # once considered, removed
+          for i in range(len(delta)):
+              mx, my = delta[i]
+              xn, yn = x_s+mx, y_s+my
+              if (0 <= xn and xn < len(grid) and
+                  0 <= yn and yn < len(grid[0])):
+                  if grid[xn][yn] == 0:
+                      previous_value = value[xn][yn]
+                      new_value = value[x_s][y_s] + cost
+                      if new_value < previous_value:
+                          value[xn][yn] = new_value  # use the seed to derive value
+                          seeds.append([xn, yn])     # one more seed to consider
+                      # end if new_value < previous_value
+                  # end of if grid[xn][yn] == 0
+              # end if (0 <= xn ...)
+          # end of for i in range(len(delta))
+      # end of while
+
+      print(' ')
+      for row in grid:
+          print(row)
+      print(' ')
+      for row in value:
+          print(row)
+      return value
+  # grid = [[0, 0],
+  #         [1, 0]]
+  # goal = [len(grid)-1, len(grid[0])-1]
+
+  compute_value(grid, goal,cost)
+#+END_SRC
+
+The seeds are the cells whose value are computed, or updated that their values may help to update their neighbors' values.
+As long as a node's value is updated, it should be put to seeds to propagate its value change to its neighbors.
+
+Note, the initial value should be initialized to be larger than the largest number of steps to the goal,
+for the algorithm to work.
+
+**** Compute optimum policy
+
+     From any cell, compute the optimal movement at that cell to reach the goal.
+
+     Note, Sebastian's instruction is often burried in the commpents of his practice code.
+     It's less formal, thus sometimes, one may miss the instruction, or become fuzzy of the instruction.
+
+     Here is the instruction copied from the comments of the assignment, which is quite clear:
+
+     Write a function optimum_policy that returns
+     a grid which shows the optimum policy for robot
+     motion. This means there should be an optimum
+     direction associated with each navigable cell from
+     which the goal can be reached.
+
+     Unnavigable cells as well as cells from which
+     the goal cannot be reached should have a string
+     containing a single space (' '), as shown in the
+     previous video. The goal cell should have '*'.
+
+
+     Here is my sketch of the algorithm:
+
+     For cell with value 99, unreachable, it should have value ' '.
+
+     For the other cells, check it's reachable neighbors, to see which one is smaller the current cell's value.
+     The move direction should towards to the cell with smaller value.
+
+#+NAME:optimum-policy
+#+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
+  # ----------
+  # User Instructions:
+  #
+  # Create a function compute_value which returns
+  # a grid of values. The value of a cell is the minimum
+  # number of moves required to get from the cell to the goal.
+  #
+  # If a cell is a wall or it is impossible to reach the goal from a cell,
+  # assign that cell a value of 99.
+  # ----------
+
+  grid = [[0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 0, 0, 0, 1, 0]]
+  goal = [len(grid)-1, len(grid[0])-1]
+  cost = 1 # the cost associated with moving from a cell to an adjacent one
+
+  delta = [[-1, 0 ], # go up
+           [ 0, -1], # go left
+           [ 1, 0 ], # go down
+           [ 0, 1 ]] # go right
+
+  delta_name = ['^', '<', 'v', '>']
+
+  def optimum_policy(grid,goal,cost):
+      # ----------------------------------------
+      # insert code below
+      # ----------------------------------------
+      def reachable(xn, yn):
+          return (0 <= xn and xn < len(grid) and
+                  0 <= yn and yn < len(grid[0]))
+
+      # make sure your function returns a grid of values as
+      # demonstrated in the previous video.
+      value = [[99 for cell in row] for row in grid]  # initialized to be extremely large
+      xg, yg = goal
+      value[xg][yg] = 0
+      seeds = [[xg, yg]]
+
+      while seeds:
+          x_s, y_s = seeds.pop(0)  # once considered, removed
+          for i in range(len(delta)):
+              mx, my = delta[i]
+              xn, yn = x_s+mx, y_s+my
+              if reachable(xn, yn):
+                  if grid[xn][yn] == 0:
+                      previous_value = value[xn][yn]
+                      new_value = value[x_s][y_s] + cost
+                      if new_value < previous_value:
+                          value[xn][yn] = new_value  # use the seed to derive value
+                          seeds.append([xn, yn])     # one more seed to consider
+                      # end if new_value < previous_value
+                  # end of if grid[xn][yn] == 0
+              # end if (0 <= xn ...)
+          # end of for i in range(len(delta))
+      # end of while
+
+      policy = [[' ' for cell in row] for row in grid]
+
+      for x in range(len(grid)):
+          for y in range(len(grid[0])):
+              if value[x][y] == 0:
+                  policy[x][y] = "*"
+              else:
+                  value_min = value[x][y]
+                  direction_min = -1
+                  if value_min < 99:
+                      for i in range(len(delta)):
+                          mx, my = delta[i]
+                          xn, yn = x+mx, y+my
+                          if reachable(xn, yn) and value[xn][yn] < value_min:
+                              value_min = value[xn][yn]
+                              direction_min = i
+                          # end if reachable(xn, yn) and value[xn][yn] < value_min
+                      # end for i in range(len(delta))
+                      policy[x][y] = delta_name[direction_min]
+                  # end if value_min < 99
+              # end of if value[x][y] == 0
+          # end for y in range(len(grid[0]))
+      # end for x in range(len(grid))
+
+      print(' ')
+      for row in grid:
+          print(row)
+      print(' ')
+      for row in value:
+          print(row)
+      print(' ')
+      for row in policy:
+          print(row)
+      return policy
+  # grid = [[0, 0],
+  #         [1, 0]]
+  # goal = [len(grid)-1, len(grid[0])-1]
+
+  optimum_policy(grid, goal,cost)
+#+END_SRC
+
+The above code is too verbose, and the second scan of the grid is not needed.
+The movement policy may be updated, when the value is updated. Sebastian's solution does that.
+
+#+NAME:optimum-policy-sebastian
+#+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
+  # ----------
+  # User Instructions:
+  #
+  # Create a function compute_value which returns
+  # a grid of values. The value of a cell is the minimum
+  # number of moves required to get from the cell to the goal.
+  #
+  # If a cell is a wall or it is impossible to reach the goal from a cell,
+  # assign that cell a value of 99.
+  # ----------
+
+  grid = [[0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 1, 0, 0, 0, 0],
+          [0, 0, 0, 0, 1, 0]]
+  goal = [len(grid)-1, len(grid[0])-1]
+  cost = 1 # the cost associated with moving from a cell to an adjacent one
+
+  delta = [[-1, 0 ], # go up
+           [ 0, -1], # go left
+           [ 1, 0 ], # go down
+           [ 0, 1 ]] # go right
+
+  delta_name = ['^', '<', 'v', '>']
+
+  def optimum_policy(grid,goal,cost):
+      # ----------------------------------------
+      # insert code below
+      # ----------------------------------------
+      def reachable(xn, yn):
+          return (0 <= xn and xn < len(grid) and
+                  0 <= yn and yn < len(grid[0]))
+
+      # make sure your function returns a grid of values as
+      # demonstrated in the previous video.
+      value = [[99 for cell in row] for row in grid]  # initialized to be extremely large
+      policy = [[' ' for cell in row] for row in grid]
+
+      xg, yg = goal
+      value[xg][yg] = 0
+      seeds = [[xg, yg]]
+      policy[xg][yg] = '*'
+      while seeds:
+          x_s, y_s = seeds.pop(0)  # once considered, removed
+          for i in range(len(delta)):
+              mx, my = delta[i]
+              xn, yn = x_s-mx, y_s-my  # the reverse action of from the neighbor to the seed, thus expressed as the negation from the seed to the neighbor
+              if reachable(xn, yn):
+                  if grid[xn][yn] == 0:
+                      previous_value = value[xn][yn]
+                      new_value = value[x_s][y_s] + cost
+                      if new_value < previous_value:
+                          value[xn][yn] = new_value  # use the seed to derive value
+                          seeds.append([xn, yn])     # one more seed to consider
+                          policy[xn][yn] = delta_name[i]  # thus the action from the neighbor to the seed is the action without negation.
+                      # end if new_value < previous_value
+                  # end of if grid[xn][yn] == 0
+              # end if (0 <= xn ...)
+          # end of for i in range(len(delta))
+      # end of while
+      print(' ')
+      for row in grid:
+          print(row)
+      print(' ')
+      for row in value:
+          print(row)
+      print(' ')
+      for row in policy:
+          print(row)
+      return policy
+  # grid = [[0, 0],
+  #         [1, 0]]
+  # goal = [len(grid)-1, len(grid[0])-1]
+
+  optimum_policy(grid, goal,cost)
+#+END_SRC
+
+This trick in the algorithm is the update of the policy when a neighboring cell (xn, yn) found a cheaper value (path) to the seed.
+The neighboring cell is expressed as the reversed movement of from the neighboring cell to the seed, thus the change to
+the seed's coordinate x_s, y_s, is subtraction, rather than addition.
+
+With the reversed expression of movement, thus the very movement from the neighboring cell to the seed can be recorded as the
+movement without negation. This is how the policy at (xn, yn) is recorded.
+
+*** More realistic path planning: considering the real cost of turning, and the orientation of the careful
+
+You are given a car in grid with initial state
+init. Your task is to compute and return the car's
+optimal path to the position specified in goal;
+the costs for each motion are as defined in cost.
+
+There are four motion directions: up, left, down, and right.
+Increasing the index in this array corresponds to making a
+a left turn, and decreasing the index corresponds to making a
+right turn. (This is hard to understand.
+It seems that it talks about the operation/relationship among the motion directions.
+
+As the cost is defined in terms of relative turn, left, right, up, and down.
+It's relative to the car's current orientation.
+
+While the previous movement direction is in terms of the coordinate, left, is move along the x-axis' positive direction.
+right, along x-axis' negative direction, up, y-axis' positive, down, y-axis' negative.
+Let's call the previous movement as absolute movement.
+
+Computation of relative movement,
+up: no change of orientation
+down: two relative right turns or two relative left turns
+left: ?
+right: ?
+
+
+
+Next, try to use the existing implementation, adapting the goal and init positions.
+
+I may then convert the absolute movement into relative movement, and update the cost.
+
+    #+NAME:turn-planning
+    #+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
+      # ----------
+      # User Instructions:
+      #
+      # Implement the function optimum_policy2D below.
+      #
+      # You are given a car in grid with initial state
+      # init. Your task is to compute and return the car's
+      # optimal path to the position specified in goal;
+      # the costs for each motion are as defined in cost.
+      #
+      # There are four motion directions: up, left, down, and right.
+      # Increasing the index in this array corresponds to making a
+      # a left turn, and decreasing the index corresponds to making a
+      # right turn.
+
+      forward = [[-1,  0], # go up
+                 [ 0, -1], # go left
+                 [ 1,  0], # go down
+                 [ 0,  1]] # go right
+      forward_name = ['up', 'left', 'down', 'right']
+
+      # action has 3 values: right turn, no turn, left turn
+      action = [-1, 0, 1]
+      action_name = ['R', '#', 'L']
+
+      # EXAMPLE INPUTS:
+      # grid format:
+      #     0 = navigable space
+      #     1 = unnavigable space
+      grid = [[1, 1, 1, 0, 0, 0],
+              [1, 1, 1, 0, 1, 0],
+              [0, 0, 0, 0, 0, 0],
+              [1, 1, 1, 0, 1, 1],
+              [1, 1, 1, 0, 1, 1]]
+
+      init = [4, 3, 0] # given in the form [row,col,direction]
+                       # direction = 0: up
+                       #             1: left
+                       #             2: down
+                       #             3: right
+
+      goal = [2, 0] # given in the form [row,col]
+
+      cost = [2, 1, 20] # cost has 3 values, corresponding to making
+                        # a right turn, no turn, and a left turn
+
+      # EXAMPLE OUTPUT:
+      # calling optimum_policy2D with the given parameters should return
+      # [[' ', ' ', ' ', 'R', '#', 'R'],
+      #  [' ', ' ', ' ', '#', ' ', '#'],
+      #  ['*', '#', '#', '#', '#', 'R'],
+      #  [' ', ' ', ' ', '#', ' ', ' '],
+      #  [' ', ' ', ' ', '#', ' ', ' ']]
+      # ----------
+
+      # ----------------------------------------
+      # modify code below
+      # ----------------------------------------
+
+      delta = forward
+      delta_name = ['^', '<', 'v', '>']
+      def optimum_policy(grid,goal,cost):
+          def reachable(xn, yn):
+              return (0 <= xn and xn < len(grid) and
+                      0 <= yn and yn < len(grid[0]))
+
+          # make sure your function returns a grid of values as
+          # demonstrated in the previous video.
+          value = [[99 for cell in row] for row in grid]  # initialized to be extremely large
+          policy = [[' ' for cell in row] for row in grid]
+
+          xg, yg = goal
+          value[xg][yg] = 0
+          seeds = [[xg, yg]]
+          policy[xg][yg] = '*'
+          while seeds:
+              x_s, y_s = seeds.pop(0)  # once considered, removed
+              for i in range(len(delta)):
+                  mx, my = delta[i]
+                  xn, yn = x_s-mx, y_s-my  # the reverse action of from the neighbor to the seed, thus expressed as the negation from the seed to the neighbor
+                  if reachable(xn, yn):
+                      if grid[xn][yn] == 0:
+                          previous_value = value[xn][yn]
+                          new_value = value[x_s][y_s] + cost
+                          if new_value < previous_value:
+                              value[xn][yn] = new_value  # use the seed to derive value
+                              seeds.append([xn, yn])     # one more seed to consider
+                              policy[xn][yn] = delta_name[i]  # thus the action from the neighbor to the seed is the action without negation.
+                          # end if new_value < previous_value
+                      # end of if grid[xn][yn] == 0
+                  # end if (0 <= xn ...)
+              # end of for i in range(len(delta))
+          # end of while
+          print(' ')
+          for row in grid:
+              print(row)
+          print(' ')
+          for row in value:
+              print(row)
+          print(' ')
+          for row in policy:
+              print(row)
+          return policy
+
+      def optimum_policy2D(grid,init,goal,cost):
+          policy2D = optimum_policy(grid, goal, cost)
+          return policy2D
+
+      optimum_policy2D(grid, [4, 3], goal, 1)
+    #+END_SRC
+      # There are four motion directions: up, left, down, and right.
+      # Increasing the index in this array corresponds to making a
+      # a left turn, and decreasing the index corresponds to making a
+      # right turn.
+
+      Here is a table of the correlation between the orientation and the forward movement direction.
+      (They are all in absolute sense in the context of the global coordinates.)
+
+      |                 | up:0 | left:1 | down:2 | right:3 |
+      |-----------------+------+--------+--------+---------|
+      | go up: [-1, 0]  | #    | R      | RRRL   | L       |
+      |-----------------+------+--------+--------+---------|
+      | go left [0, -1] | L    | #      | R      | RRRL    |
+      |-----------------+------+--------+--------+---------|
+      | go down [1, 0]  | RRRL | L      | #      | R       |
+      |-----------------+------+--------+--------+---------|
+      | go right [0, 1] | R    | RRRL   | L      | #       |
+      |-----------------+------+--------+--------+---------|
+
+forward = [[-1,  0], # go up
+                 [ 0, -1], # go left
+                 [ 1,  0], # go down
+                 [ 0,  1]] # go right
+      forward_name = ['up', 'left', 'down', 'right']
+
+      # action has 3 values: right turn, no turn, left turn
+      action = [-1, 0, 1]
+      action_name = ['R', '#', 'L']
+
+      # EXAMPLE INPUTS:
+      # grid format:
+      #     0 = navigable space
+      #     1 = unnavigable space
+      grid = [[1, 1, 1, 0, 0, 0],
+              [1, 1, 1, 0, 1, 0],
+              [0, 0, 0, 0, 0, 0],
+              [1, 1, 1, 0, 1, 1],
+              [1, 1, 1, 0, 1, 1]]
+
+      init = [4, 3, 0] # given in the form [row,col,direction]
+                       # direction = 0: up
+                       #             1: left
+                       #             2: down
+                       #             3: right
