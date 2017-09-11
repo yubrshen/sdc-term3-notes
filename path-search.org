@@ -442,7 +442,7 @@ remember each move's previous move, then use the previous pointer to reconstruct
       x, y = init
       closed[x][y] = 1
       g = 0
-      open_list = [[g, x, y, None, None]]
+      open_list = [[g, x, y, None, None]] # g, x, y, predecessor, action_to_here
 
       found = False  # flag that is set when search is complete
       resign = False # flag set if we can't find expand
@@ -505,6 +505,8 @@ The algorithm then mark the predecessor with the action taken.
 
 It's equivalent to mine, but it seems simpler as it use af separate structure to record the actions,
 avoiding the unnecessary handling of the predecessor, and action to here when search for the path.
+
+This solution has the limitation that it cannot handle the explorations of multiple paths crossing the same location.
 
 #+NAME:draw-path-by-retracting-action-recorded-sebastian
 #+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
@@ -928,7 +930,6 @@ for the algorithm to work.
      containing a single space (' '), as shown in the
      previous video. The goal cell should have '*'.
 
-
      Here is my sketch of the algorithm:
 
      For cell with value 99, unreachable, it should have value ' '.
@@ -1272,47 +1273,607 @@ I may then convert the absolute movement into relative movement, and update the 
 
       optimum_policy2D(grid, [4, 3], goal, 1)
     #+END_SRC
-      # There are four motion directions: up, left, down, and right.
-      # Increasing the index in this array corresponds to making a
-      # a left turn, and decreasing the index corresponds to making a
-      # right turn.
+**** Calculus of motion and orientation
 
-      Here is a table of the correlation between the orientation and the forward movement direction.
-      (They are all in absolute sense in the context of the global coordinates.)
 
-      |                 | up:0 | left:1 | down:2 | right:3 |
-      |-----------------+------+--------+--------+---------|
-      | go up: [-1, 0]  | #    | R      | RRRL   | L       |
-      |-----------------+------+--------+--------+---------|
-      | go left [0, -1] | L    | #      | R      | RRRL    |
-      |-----------------+------+--------+--------+---------|
-      | go down [1, 0]  | RRRL | L      | #      | R       |
-      |-----------------+------+--------+--------+---------|
-      | go right [0, 1] | R    | RRRL   | L      | #       |
-      |-----------------+------+--------+--------+---------|
+ There are four motion directions: up, left, down, and right.
+ Increasing the index in this array corresponds to making a
+ a left turn, and decreasing the index corresponds to making a
+ right turn.
 
-forward = [[-1,  0], # go up
-                 [ 0, -1], # go left
-                 [ 1,  0], # go down
-                 [ 0,  1]] # go right
-      forward_name = ['up', 'left', 'down', 'right']
+ The understanding of the above statement
+ (i.e the understanding of the relationship among
+ - the motion direction,
+ - the orientation (direction), and
+ - motion turns.)
 
-      # action has 3 values: right turn, no turn, left turn
-      action = [-1, 0, 1]
-      action_name = ['R', '#', 'L']
+ Given the sequence of motion directions:
+ - up (0),
 
-      # EXAMPLE INPUTS:
-      # grid format:
-      #     0 = navigable space
-      #     1 = unnavigable space
-      grid = [[1, 1, 1, 0, 0, 0],
-              [1, 1, 1, 0, 1, 0],
-              [0, 0, 0, 0, 0, 0],
-              [1, 1, 1, 0, 1, 1],
-              [1, 1, 1, 0, 1, 1]]
+ - left (1),
 
-      init = [4, 3, 0] # given in the form [row,col,direction]
-                       # direction = 0: up
-                       #             1: left
-                       #             2: down
-                       #             3: right
+ - down (2),
+
+ - right (3)
+
+ In the bracket, the number is the index of the motion direction.
+
+ The orientation (direction) can also be represented the same way:
+ - up (0),
+
+ - left (1),
+
+ - down (2),
+
+ - right (3)
+
+ Then we have the following relationship:
+
+ \begin{eqnarray}
+ \label{eq:0}
+ new\_orientation_{index} = (old\_orientation + turn_{index}) &  & \\
+ \end{eqnarray}
+
+ and by the definition of $orientation_{index}$ and $motion_{index}$:
+
+ \begin{eqnarray}
+ \label{eq:3}
+ new\_orientation = motion_{index} &  & \\
+ \end{eqnarray}
+
+ so substituting $new\_orientation$ for $motion_{index}$, we will have the following
+
+ \begin{eqnarray}
+ \label{eq:1}
+ turn_{index} = (motion_{index} - orientation_{index}) mod 4 &  & \\
+ \end{eqnarray}
+
+ where $turn_{index} \in [0, 1, 2, 3]$
+ with the interpretation:
+
+ - 0: straight
+ - 1: left turn
+ - 2: reverse
+ - 3: right turn
+
+ and $motion_{index}$ being the index of the motion directions as defined above,
+ and $$orientation_{index} the index of the orientations (directions) as defined above with the same order of directions.
+
+ The above equation can be interpreted as follows:
+
+ When the orientation direction is up, if the orientation direction is up, then $orientation_{index} = 0$,
+ - if $motion_{index} = 0$, go up, $0 - 0 = 0$, thus computed $turn_{index}$ is 0, that is, go straight.
+ - if $motion_{index} = 1$, go left, $1 - 0 = 1$, thus computed $turn_{index}$ is 1, that is, turn left.
+ - if $motion_{index} = 2$, go down, $2 - 0 = 2$, thus computed $turn_{index}$ is 2, that is, turn reverse.
+ - if $motion_{index} = 3$, go right, $3 - 0 = 3$, thus computed $turn_{index}$ is 3, that is, turn right.
+
+ Likewise, if the orientation direction is left, then $orientation_{index} = 1$,
+ - if $motion_{index} = 1$, go left, $1 - 1 = 0$, thus computed $turn_{index}$ is 0, that is, go straight.
+ - if $motion_{index} = 2$, go down, $2 - 1 = 1$, thus computed $turn_{index}$ is 1, that is, turn left.
+ - if $motion_{index} = 3$, go right, $3 - 1 = 2$, thus computed $turn_{index}$ is 2, that is, turn reverse.
+ - if $motion_{index} = 0$, go up, $0 - 1 = -1, -1 mod 4 = 3$, thus computed $turn_{index}$ is 3, that is, turn right.
+
+ Similar relationship can be established for the $orientation_{index}$ being 2 (down), 3 (right). It's always the case that
+ - the $motion_{index}$ equating to one plus the $orientation_{index}$ would be a left turn $turn_{index} = 1$, and
+ - the $motion_{index}$ equating to one minus the $orientation_{index}$ (in module 4 sense), it would be a right turn, $turn_{index} = 3$
+
+ The relationship can be further illustrated by the following diagram:
+
+ Based on the above relationship, then we can express the $motion_{index}$ in terms of $turn_{index}$ and $orientation_{index}$:
+
+ \begin{eqnarray}
+ \label{eq:2}
+ motion_{index} = (turn_{index} + orientation_{index}) mod 4 &  & \\
+  &  & \\
+ \end{eqnarray}
+
+**** Shortest path with initial orientation
+
+ with the above expression, we can enumerate the possible motion directions in terms of turn directions.
+ This is the base to transform the previous algorithms of finding the shortest path in terms of motion directions, to
+ the shortest path algorithm in terms of orientation directions and turn directions.
+
+ With the orientation directions become more complicated. It's more practical to use the turn directions, and it's not possible to do reverse.
+
+ Next, transform the algorithm in terms of motion directions to that in terms of turn directions, starting from the initial position and orientation of the vehicle.
+ Transform the A* algorithm to that in terms of initial orientation and turn directions
+
+ #+NAME:shortest-path-with-initial-orientation
+ #+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
+   # -----------
+   # User Instructions:
+   #
+   # User Instructions:
+   #
+   # Implement the function optimum_policy2D below.
+   #
+   # You are given a car in grid with initial state
+   # init. Your task is to compute and return the car's
+   # optimal path to the position specified in goal;
+   # the costs for each motion are as defined in cost.
+   #
+   # There are four motion directions: up, left, down, and right.
+   # Increasing the index in this array corresponds to making a
+   # a left turn, and decreasing the index corresponds to making a
+   # right turn.
+
+   forward = [[-1,  0], # go up
+              [ 0, -1], # go left
+              [ 1,  0], # go down
+              [ 0,  1]] # go right
+   forward_name = ['up', 'left', 'down', 'right']
+
+   # action has 3 values: right turn, no turn, left turn
+   turn_index = [-1, 0, 1]
+   turn_name = ['R', '#', 'L']
+
+   # EXAMPLE INPUTS:
+   # grid format:
+   #     0 = navigable space
+   #     1 = unnavigable space
+   grid = [[1, 1, 1, 0, 0, 0],
+           [1, 1, 1, 0, 1, 0],
+           [0, 0, 0, 0, 0, 0],
+           [1, 1, 1, 0, 1, 1],
+           [1, 1, 1, 0, 1, 1]]
+
+   init = [4, 3, 0] # given in the form [row,col,direction]
+   # direction = 0: up
+   #             1: left
+   #             2: down
+   #             3: right
+
+   goal = [2, 0] # given in the form [row,col]
+
+   cost = [2, 1, 100] # cost has 3 values, corresponding to making
+   # change the cost to left turn from 20 to 100
+   # a right turn, no turn, and a left turn
+
+   # EXAMPLE OUTPUT:
+   # calling optimum_policy2D with the given parameters should return
+   # [[' ', ' ', ' ', 'R', '#', 'R'],
+   #  [' ', ' ', ' ', '#', ' ', '#'],
+   #  ['*', '#', '#', '#', '#', 'R'],
+   #  [' ', ' ', ' ', '#', ' ', ' '],
+   #  [' ', ' ', ' ', '#', ' ', ' ']]
+   # ----------
+
+   def heuristics(x, y, goal):
+       """
+         The Manhattan distance between point x, y, and the goal
+        """
+       xg, yg = goal
+       return 0 # abs(x-xg) + abs(y - yg)
+
+   def optimum_policy2D(grid,init,goal,cost):
+       policy2D = [[' ' for cell in row] for row in grid]
+
+       closed = [[0 for col in range(len(grid[0]))] for row in range(len(grid))]
+
+       expand = [[-1 for col in range(len(grid[0]))] for row in range(len(grid))]
+       # action = [[-1 for col in range(len(grid[0]))] for row in range(len(grid))]
+       turns = [[" " for cell in row] for row in grid]
+
+       x, y, orientation = init
+       closed[x][y] = 1
+       g = 0
+       f = 0
+       open = [[f, g, x, y, orientation, None, None]]  # add the last attribute, the predecessor structure
+
+       found = False  # flag that is set when search is complete
+       resign = False # flag set if we can't find expand
+       count = 0
+
+       while not found and not resign:
+           if len(open) == 0:
+               resign = True
+               return "Fail"
+           else:
+               open.sort()
+               open.reverse()
+               next = open.pop()
+               f, g, x, y, orientation, turn_index_to_here, predecessor = next
+               expand[x][y] = count
+               count += 1
+
+               if x == goal[0] and y == goal[1]:
+                   found = True
+                   turns[x][y] = "*"
+                   while predecessor:
+                       turn_index_to_predecessor = turn_index_to_here
+                       f, g, x_pre, y_pre, orientation, turn_index_to_here, predecessor = predecessor
+                       turns[x_pre][y_pre] = turn_name[turn_index_to_predecessor + 1]
+               else:
+                   for turn in turn_index:
+                       # need translate the turn with orientation to new coordinates
+                       motion_index = (turn + orientation) % 4
+                       mx, my = forward[motion_index]
+                       x2 = x + mx
+                       y2 = y + my
+                       if x2 >= 0 and x2 < len(grid) and y2 >=0 and y2 < len(grid[0]):
+                           if closed[x2][y2] == 0 and grid[x2][y2] == 0:
+                               g2 = g + cost[turn+1]
+                               f2 = g2 + heuristics(x2, y2, goal)
+                               new_orientation_index = motion_index
+                               open.append([f2, g2, x2, y2, new_orientation_index, turn, next])
+                               closed[x2][y2] = 1
+       # end of while not found and not resign
+       print(' ')
+       for row in grid:
+           print(row)
+       print('')
+       for row in expand:
+           print(row)
+       print(' ')
+       for row in turns:
+           print(row)
+       return turns
+   # grid = [[0, 0],
+   #         [0, 0]]
+   # goal = [len(grid)-1, len(grid[0])-1]
+   # init = [0, 0, 0]
+   print(optimum_policy2D(grid,init,goal,cost))
+ #+END_SRC
+
+ My current concern is that the closed data structure might reject some cells that might be part of parallel,
+ unsettled search, missing some possible path that may run through those explored, but not settled path.
+ It looks like let a cell be closed after it's been explored may not be right. It should not be closed when it's visited.
+ But how to determine when a cell should be closed? It seems hard.
+
+ Next, I might want to take my previous implementations of considering multiple paths.
+ But first, I need to walk through the live code to understand the problem better.
+
+ Here is an experiment removing the constraint on closed.
+ It works as expected.
+
+ #+NAME:shortest-path-with-initial-orientation-removing-closed-constraint
+ #+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
+   # -----------
+   # User Instructions:
+   #
+   # Implement the function optimum_policy2D below.
+   #
+   # You are given a car in grid with initial state
+   # init. Your task is to compute and return the car's
+   # optimal path to the position specified in goal;
+   # the costs for each motion are as defined in cost.
+   #
+   # There are four motion directions: up, left, down, and right.
+   # Increasing the index in this array corresponds to making a
+   # a left turn, and decreasing the index corresponds to making a
+   # right turn.
+
+   forward = [[-1,  0], # go up
+              [ 0, -1], # go left
+              [ 1,  0], # go down
+              [ 0,  1]] # go right
+   forward_name = ['up', 'left', 'down', 'right']
+
+   # action has 3 values: right turn, no turn, left turn
+   turn_index = [-1, 0, 1]
+   turn_name = ['R', '#', 'L']
+
+   # EXAMPLE INPUTS:
+   # grid format:
+   #     0 = navigable space
+   #     1 = unnavigable space
+   grid = [[1, 1, 1, 0, 0, 0],
+           [1, 1, 1, 0, 1, 0],
+           [0, 0, 0, 0, 0, 0],
+           [1, 1, 1, 0, 1, 1],
+           [1, 1, 1, 0, 1, 1]]
+
+   init = [4, 3, 0] # given in the form [row,col,direction]
+   # direction = 0: up
+   #             1: left
+   #             2: down
+   #             3: right
+
+   goal = [2, 0] # given in the form [row,col]
+
+   cost = [2, 1, 20] # cost has 3 values, corresponding to making
+   # a right turn, no turn, and a left turn
+
+   # EXAMPLE OUTPUT:
+   # calling optimum_policy2D with the given parameters should return
+   # [[' ', ' ', ' ', 'R', '#', 'R'],
+   #  [' ', ' ', ' ', '#', ' ', '#'],
+   #  ['*', '#', '#', '#', '#', 'R'],
+   #  [' ', ' ', ' ', '#', ' ', ' '],
+   #  [' ', ' ', ' ', '#', ' ', ' ']]
+   # ----------
+
+   def heuristics(x, y, goal):
+       """
+         The Manhattan distance between point x, y, and the goal
+        """
+       xg, yg = goal
+       return abs(x-xg) + abs(y - yg)
+
+   def optimum_policy2D(grid,init,goal,cost):
+       policy2D = [[' ' for cell in row] for row in grid]
+
+       closed = [[0 for col in range(len(grid[0]))] for row in range(len(grid))]
+
+       expand = [[-1 for col in range(len(grid[0]))] for row in range(len(grid))]
+       # action = [[-1 for col in range(len(grid[0]))] for row in range(len(grid))]
+       turns = [[" " for cell in row] for row in grid]
+
+       x, y, orientation = init
+       closed[x][y] = 1
+       g = 0
+       f = 0
+       open = [[f, g, x, y, orientation, None, None]]  # add the last attribute, the predecessor structure
+
+       found = False  # flag that is set when search is complete
+       resign = False # flag set if we can't find expand
+       count = 0
+
+       while not found and not resign:
+           if len(open) == 0:
+               resign = True
+               return "Fail"
+           else:
+               open.sort()
+               open.reverse()
+               next = open.pop()
+               f, g, x, y, orientation, turn_index_to_here, predecessor = next
+               expand[x][y] = count
+               count += 1
+
+               if x == goal[0] and y == goal[1]:
+                   found = True
+                   turns[x][y] = "*"
+                   while predecessor:
+                       turn_index_to_predecessor = turn_index_to_here
+                       f, g, x_pre, y_pre, orientation, turn_index_to_here, predecessor = predecessor
+                       turns[x_pre][y_pre] = turn_name[turn_index_to_predecessor + 1]
+               else:
+                   for turn in turn_index:
+                       # need translate the turn with orientation to new coordinates
+                       motion_index = (turn + orientation) % 4
+                       mx, my = forward[motion_index]
+                       x2 = x + mx
+                       y2 = y + my
+                       if x2 >= 0 and x2 < len(grid) and y2 >=0 and y2 < len(grid[0]):
+                           #if closed[x2][y2] == 0 and grid[x2][y2] == 0:
+                           if grid[x2][y2] == 0:
+                               g2 = g + cost[turn+1]
+                               f2 = g2 + heuristics(x2, y2, goal)
+                               new_orientation_index = motion_index
+                               open.append([f2, g2, x2, y2, new_orientation_index, turn, next])
+                               closed[x2][y2] = 1
+       # end of while not found and not resign
+       print(' ')
+       for row in grid:
+           print(row)
+       print('')
+       for row in expand:
+           print(row)
+       print(' ')
+       for row in turns:
+           print(row)
+       return turns
+
+   # grid = [[0, 0],
+   #         [0, 0]]
+   # goal = [len(grid)-1, len(grid[0])-1]
+   # init = [0, 0, 0]
+   print(optimum_policy2D(grid,init,goal,cost))
+ #+END_SRC
+
+**** Following Sebastian's using dynamic programming, and then use the figure out the turns.
+
+     Outline, do the dynamic programming in the 3 dimensions, coordinates, x, y, and the orientations.
+
+ #+NAME:dynamic-programming-in-3D-then-walk-the-policy
+ #+BEGIN_SRC python :noweb yes :tangle ./src/sandbox.py :exports none
+   # ----------
+   # User Instructions:
+   #
+   # Implement the function optimum_policy2D below.
+   #
+   # You are given a car in grid with initial state
+   # init. Your task is to compute and return the car's
+   # optimal path to the position specified in goal;
+   # the costs for each motion are as defined in cost.
+   #
+   # There are four motion directions: up, left, down, and right.
+   # Increasing the index in this array corresponds to making a
+   # a left turn, and decreasing the index corresponds to making a
+   # right turn.
+
+   # grid = [[0, 1, 0, 0, 0, 0],
+   #         [0, 1, 0, 0, 0, 0],
+   #         [0, 1, 0, 0, 0, 0],
+   #         [0, 1, 0, 0, 0, 0],
+   #         [0, 0, 0, 0, 1, 0]]
+   # goal = [len(grid)-1, len(grid[0])-1]
+   # cost = 1 # the cost associated with moving from a cell to an adjacent one
+
+   # delta = [[-1, 0 ], # go up
+   #          [ 0, -1], # go left
+   #          [ 1, 0 ], # go down
+   #          [ 0, 1 ]] # go right
+
+   # delta_name = ['^', '<', 'v', '>']
+
+   forward = [[-1,  0], # go up
+              [ 0, -1], # go left
+              [ 1,  0], # go down
+              [ 0,  1]] # go right
+   forward_name = ['up', 'left', 'down', 'right']
+
+   # action has 3 values: right turn, no turn, left turn
+   turn_offsets = [-1, 0, 1]
+   turn_name = ['R', '#', 'L']
+
+   # EXAMPLE INPUTS:
+   # grid format:
+   #     0 = navigable space
+   #     1 = unnavigable space
+   grid = [[1, 1, 1, 0, 0, 0],
+           [1, 1, 1, 0, 1, 0],
+           [0, 0, 0, 0, 0, 0],
+           [1, 1, 1, 0, 1, 1],
+           [1, 1, 1, 0, 1, 1]]
+
+   init = [4, 3, 0] # given in the form [row,col,direction]
+   # direction = 0: up
+   #             1: left
+   #             2: down
+   #             3: right
+
+   goal = [2, 0] # given in the form [row,col]
+
+   cost = [2, 1, 20] # cost has 3 values, corresponding to making
+   # a right turn, no turn, and a left turn
+
+   # EXAMPLE OUTPUT:
+   # calling optimum_policy2D with the given parameters should return
+   # [[' ', ' ', ' ', 'R', '#', 'R'],
+   #  [' ', ' ', ' ', '#', ' ', '#'],
+   #  ['*', '#', '#', '#', '#', 'R'],
+   #  [' ', ' ', ' ', '#', ' ', ' '],
+   #  [' ', ' ', ' ', '#', ' ', ' ']]
+   # ----------
+
+   def heuristics(x, y, goal):
+       """
+            The Manhattan distance between point x, y, and the goal
+           """
+       xg, yg = goal
+       return abs(x-xg) + abs(y - yg)
+
+   def optimum_policy2D(grid,init, goal, cost):
+       def reachable(xn, yn):
+           return (0 <= xn and xn < len(grid) and
+                   0 <= yn and yn < len(grid[0]))
+
+       value = [[[999 for cell in row] for row in grid] for orientation in range(len(forward))]  # initialized to be extremely large, considering x, y, and orientations
+       policy = [[[' ' for cell in row] for row in grid] for orientation in range(len(forward))]
+       policy2D = [[' ' for cell in row] for row in grid]
+
+       seeds = []
+       xg, yg = goal
+       for orientation in range(len(forward)):
+           value[orientation][xg][yg] = 0
+           seeds.append([orientation, xg, yg])
+           policy[orientation][xg][yg] = '*'
+           policy2D[xg][yg] = '*'
+       # end of for orientation in range(len(forward))
+
+       while seeds:
+           orientation_to, x_to, y_to = seeds.pop(0)  # once considered, removed
+           mx, my = forward[orientation_to]  # orientation_to is the motion index causing the motion from orientation_from to orientation_to
+           xn, yn = x_to-mx, y_to-my  # the reverse action of from the neighbor to the seed, thus expressed as the negation from the seed to the neighbor
+           if reachable(xn, yn):
+               if grid[xn][yn] == 0:
+                   for turn_offset in turn_offsets:
+                       orientation_from = (orientation_to - turn_offset) % len(forward)  # based on the fact: orientation_to = (orientation_from + turn_offset) % len(forward)
+                       previous_value = value[orientation_from][xn][yn]
+                       new_value = value[orientation_to][x_to][y_to] + cost[turn_offset + 1]
+                       if new_value < previous_value:
+                           value[orientation_from][xn][yn] = new_value  # use the seed to derive value
+                           seeds.append([orientation_from, xn, yn])  # one more seed to consider
+                           policy[orientation_from][xn][yn] = turn_offset  # the index of the turns that caused the motion from the [orientation_from, xn, yn] to the seed [orientation_to, x_to, y_to]
+                       # end if new_value < previous_value
+                   # end of for turn_offsets in turn_offsets
+               # end of if grid[xn][yn] == 0
+           # end if (0 <= xn ...)
+       # end of while seeds
+
+       # Traverse the policy with a particular initial position with orientation:
+       x, y, orientation = init
+       while policy2D[x][y] != '*':
+           # compute policy2D[x][y]
+           policy2D[x][y] = turn_name[ policy[orientation][x][y] + 1 ]
+           # figure out the next orientation (motion)
+           motion_index = (orientation + policy[orientation][x][y]) % len(forward)
+           mx, my = forward[motion_index]
+           orientation, x, y = motion_index, x+mx, y+my
+       # end of while policy[orientation][x][y]
+       print(' ')
+       for row in grid:
+           print(row)
+       print(' ')
+       for row in value:
+           print(row)
+       print(' ')
+       for row in policy2D:
+           print(row)
+       print('')
+       return policy2D
+   # grid = [[0, 0],
+   #         [0, 0]]
+   # goal = [len(grid)-1, len(grid[0])-1]
+   # init = [0, 0, 0]
+   print(optimum_policy2D(grid,init,goal,cost))
+ #+END_SRC
+
+**** Notes of Sabstian's remark on the relationship between the turn action and the forward motion/orientation.
+
+     Given
+ #+NAME:turn-action-and-forward-motions
+ #+BEGIN_SRC python :noweb yes :tangle :exports none
+   turn_actions = [-1, 0, 1]
+   forward = [
+       [-1, 1],                    # go up
+       [0, -1],                    # go left
+       [1, 0],                     # go down
+       [0, 1]                      # do right
+   ]
+
+ #+END_SRC
+
+ In this coordinate system, the first coordinate, x is the vertical movement, the second, y is the lateral movement.
+
+ Then we have the following relationship:
+
+ Move along the forward array backward (index -1) is turning left.
+ Move forward (index + 1) is turning right.
+ Staying at the current forward position (index change 0) is go straight at the current orientation.
+
+ That's why the turn_actions, has values -1, 0, 1, corresponding to turn left, go straight, and turn right.
+
+**** Additional notes (draft)
+
+       Here is a table of the correlation between the orientation and the forward movement direction.
+       (They are all in absolute sense in the context of the global coordinates.)
+
+       |                 | up:0 | left:1 | down:2 | right:3 |
+       |-----------------+------+--------+--------+---------|
+       | go up: [-1, 0]  | #    | R      | RRRL   | L       |
+       |-----------------+------+--------+--------+---------|
+       | go left [0, -1] | L    | #      | R      | RRRL    |
+       |-----------------+------+--------+--------+---------|
+       | go down [1, 0]  | RRRL | L      | #      | R       |
+       |-----------------+------+--------+--------+---------|
+       | go right [0, 1] | R    | RRRL   | L      | #       |
+       |-----------------+------+--------+--------+---------|
+
+ forward = [[-1,  0], # go up
+                  [ 0, -1], # go left
+                  [ 1,  0], # go down
+                  [ 0,  1]] # go right
+       forward_name = ['up', 'left', 'down', 'right']
+
+       # action has 3 values: right turn, no turn, left turn
+       action = [-1, 0, 1]
+       action_name = ['R', '#', 'L']
+
+       # EXAMPLE INPUTS:
+       # grid format:
+       #     0 = navigable space
+       #     1 = unnavigable space
+       grid = [[1, 1, 1, 0, 0, 0],
+               [1, 1, 1, 0, 1, 0],
+               [0, 0, 0, 0, 0, 0],
+               [1, 1, 1, 0, 1, 1],
+               [1, 1, 1, 0, 1, 1]]
+
+       init = [4, 3, 0] # given in the form [row,col,direction]
+                        # direction = 0: up
+                        #             1: left
+                        #             2: down
+                        #             3: right
