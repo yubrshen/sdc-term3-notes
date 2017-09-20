@@ -1,0 +1,1697 @@
+#+TITLE: Behavior Planning
+
+* Introduction to Behavior Planning
+
+** The hierarchy of controls in autonomous vehicle
+
+   As the context for behavior planning
+
+| Behavior Planning |            | 10 secs and beyond                                      | take input from prediction and location                                          | output to trajectory                  |
+|-------------------+------------+---------------------------------------------------------+----------------------------------------------------------------------------------+---------------------------------------|
+| Prediction        |            | smaller than behavior planning's                        | input from sensor fusion                                                         | output to trajectory                  |
+|-------------------+------------+---------------------------------------------------------+----------------------------------------------------------------------------------+---------------------------------------|
+| Localization      | Trajectory | smaller than prediction's                               | localization to behavior; trajectory receives input from behavior and prediction | trajectory output to motion control   |
+|-------------------+------------+---------------------------------------------------------+----------------------------------------------------------------------------------+---------------------------------------|
+| Sensor Fusion     |            | larger than motion control's and smaller than the above |                                                                                  | output to prediction and localization |
+|-------------------+------------+---------------------------------------------------------+----------------------------------------------------------------------------------+---------------------------------------|
+| Motion Control    |            | smallest time interval                                  | input from trajectory                                                            |                                       |
+
+
+Path planning consists of:
+
+- Behavior planning
+- Prediction
+- Trajectory
+
+** Representation of behavior planning
+
+   - target lane
+   - target leading vehicle
+   - target speed
+   - seconds to reach target (time)
+   -
+
+** The problem of behavior planning
+
+   How to reach a destination from a starting position (lane, and spot),
+   in terms of lane switch, turn, speed, etc.
+   The maneuvers should be
+   - feasible,
+   - safe
+   - legal
+   - efficient
+
+   It's not responsible
+   - Execution details
+   - Collision avoidance
+
+   The above detailed execution should be done in the next level of execution.
+
+** Implementing behavior planning by finite state machine
+
+   - State machine concepts
+     - states, finite number of states
+       - terminating/accepting state
+       - initial state
+     - state transition
+       - legal transition
+       - self transition
+     - trigger/event to state transition (input)
+     - action performed/side effect during the transition (?)
+
+   - Example of state machine: vending machine
+     - all transition cost 20 cents, requiring exact amount
+
+     - only 5 cents (nickel), and 10 cents (dime) money will be used
+
+     - the initial state (start): 0 cents
+
+     - initial state: -- event: enter nickel --> nickel-state
+     - initial state: -- event: enter dime --> dime-state
+     - etc.
+
+       [[./figures/state-machine-vending.png]]
+
+   - Strength of state machine
+     - easy to reason about
+       - logical state mapped to physical state
+     - easy to maintain/modify, as long as the number of states is small
+
+   - Weakness of state machine
+     - Easily abused, too easy to start, with not well thought out state and transition design, accumulating complexity, neglecting the maintainance
+
+     - The number of states could grow to be hard to understand, reason, and maintain.
+
+   - Procedure to design a state machine
+     - identify the accepting/terminating state, so that the accepting state would correspond the idea state of the solution sought.
+     - Carefully enumerate the states, try to minimize the number of the states
+
+       - prune the states after initial design
+
+       - add additional necessary states
+
+       - consider the various scenarios in the related solution space
+
+         - the states should have sufficient expressiveness to represent the problem/solution space
+
+         - it should be minimal satisfying the objective
+
+         - keep lane vs. change lane
+
+         - consider the analogues, and the opposite, such as speed up vs. slow down, left vs. right, front vs. back, etc. acceleration vs deceleration
+
+     - identify the initial (start) state
+
+     - identify the input/events
+
+     - define the transitions triggered by input/events
+
+   - States for autonomous vehicle on highway:
+
+     - ready/initial state
+     - keep lane (keep)
+
+       - keep target speed (removed)
+
+       - speed up (removed)
+
+       - slow down (removed)
+
+       - follow vehicle (removed)
+
+       - stop (removed)
+
+     - prepare for lane change left (removed)
+     - prepare for lane change right (removed)
+     - change lane left (keep)
+     - change lane right (keep)
+   - Specification of the states
+     - lane keep
+
+       - d state near the center line for lane
+
+       - s drive at the target speed when feasible, otherwise, drive safely in the lane (d near 0 for the lane)
+
+     - prepare lane change left/right (needed, as there are preparation needed before lane change)
+
+       - d stay near center line for current lane (the same as lane keep, but actually for human, one might veer slightly towards the target lane while still within the current lane)
+
+       - s attempt to match position and speed of "gap" in the target (adjacent) lane
+
+       - signal - activate turning signal
+
+
+     - lane change left/right
+
+       - d move left or right (lane)
+
+       - s same rules as keep lane (for initial lane)
+
+     - The resulted state transition:
+
+     [[./figures/state-transitions-change-lane.png]]
+
+
+     - The input (events) to autonomous vehicle behavior planning state machine
+       - predictions
+       - map
+       - localization data
+       - speed limit
+       - current state
+     - Model behavior planning as optimal path search
+       from the current state, search the optimal (lowest cost) move to the next adjacent state.
+
+       Here is the pseudo code:
+       Compute the cost for each possible state, and select the next state with the lowest cost.
+
+       #+NAME:optimal-move
+       #+BEGIN_SRC python :noweb yes :tangle :exports none
+         def transition_function(predictions, current_fsm_state, current_pose, cost_functions, weights):
+             # only consider states which can be reached from current FSM state.
+             possible_successor_states = successor_states(current_fsm_state)
+
+             # keep track of the total cost of each state.
+             costs = []
+             for state in possible_successor_states:
+                 # generate a rough idea of what trajectory we would
+                 # follow IF we chose this state.
+                 trajectory_for_state = generate_trajectory(state, current_pose, predictions)
+
+                 # calculate the "cost" associated with that trajectory.
+                 cost_for_state = 0
+                 for i in range(len(cost_functions)) :
+                     # apply each cost function to the generated trajectory
+                     cost_function = cost_functions[i]
+                     cost_for_cost_function = cost_function(trajectory_for_state, predictions)
+
+                     # multiply the cost by the associated weight
+                     weight = weights[i]
+                     cost_for_state += weight * cost_for_cost_function
+                  costs.append({'state' : state, 'cost' : cost_for_state})
+
+             # Find the minimum cost state.
+             best_next_state = None
+             min_cost = 9999999
+             for i in range(len(possible_successor_states)):
+                 state = possible_successor_states[i]
+                 cost  = costs[i]
+                 if cost < min_cost:
+                     min_cost = cost
+                     best_next_state = state
+
+             return best_next_state
+       #+END_SRC
+
+     - Use cost function to express preference to the maneuvers, encourage good maneuvers, punish bad maneuvers.
+
+       For example, Speed Limit:
+       - Exceeding speed limit, maximum cost
+
+       - Not moving rather high cost
+       - in between, vary cost, with zero cost at the ideal speed
+
+         [[ ./figures/speed-cost.png]]
+
+       - Cost model for lane change
+
+         - The cost of lane change should be inverse to the lateral distance traveled for lane change.
+
+         - The cost of lane change should be inverse to the distance to the goal position
+
+         - The cost should be within [0, 1]
+
+         - The following expression satisfies the intuition: $1 - e^{-\frac{|\Delta d|}{\Delta s}}$
+
+       - The challenges of combining multiple constraints (cost) in behavior planning
+
+         - Use additive and weights to combine multiple costs
+
+         - Do regression test to make sure that all the constraints are satisfied and in all situations, typically through simulations
+
+         - Need to have priority in the satisfying the constraints/costs, some are more critical than the others, even magnitude wise, it may be apparent (balancing the costs of drastically different magnitude)
+
+           - Feasibility next
+           - Safety first
+           - Legality
+           - Comfort
+           - Then efficiency
+         - The importance of the costs may vary in different situations:
+           - For example, at the red light, legality is of higher importance than feasibility
+
+           - At merging from ramp to highway, speed should be as close to the other traffic as soon as possible for safety conscern
+
+         - Finer decomposition of cost functions for different aspects (classes) of the constraints:
+
+           - legality: binary
+
+           - safety: binary
+
+           - feasibility: binary
+
+           - comfort: discrete
+
+           - Efficiency: continuous
+
+         - Use optimization techniques to find optimal weights (such as gradient decent), when possible/feasible
+
+         - Consider the vehicle's state, position, velocity, acceleration, etc. as the other dimensions of cost model in addition to the class/aspects of constraints
+
+         - The matrix of considerations
+           At the merging into highway, speed to be close to the traffic is important for safety
+
+           [[./figures/consideration-matrix-merge-to-highway.png]]
+
+           At the yellow light, following the traffic law becomes much more important than usual highway driving, which may not be represented enough in the matrix.
+
+           [[./figures/at-yellow-light-considerations-matrix.png]]
+
+           It's getting complex with the state machine, and the inherent complex constraints.
+
+         - Timing requirement of the behavior planner
+
+           Although the behavior planner does not need to be too frequent to provide the planning but it should not block the lower layers' need for behavior planning input.
+           It should provide behavior planning output when it's needed, no matter it has the most update data or not. It should provide the best plan with the data available.
+
+
+** Behavior Planner implementation
+
+*** Implementation in Python
+
+**** Understanding of the existing code
+
+***** The domain model
+
+      There are two main objects:
+      - Road
+      - Vehicle
+****** Road
+       Road consists of lanes. Different lanes may have different speeds.
+       Road is the stage where vehicles run, or is simulated to run.
+
+       Key attributes:
+       - SPEED_LIMIT
+       - TRAFFIC_DENSITY ?
+       - LANE_SPEEDS: a list of speed for the lanes, with index starting from 0, to num_lanes-1
+       - update_width, it may have the value AMOUNT_OF_ROAD_VISIBLE ?
+       - density: ?
+       - camera_center: ?
+       - vehicles: the set of vehicles in the road system, implemented as a map from vehicle_key to vehicle object.
+       - vehicles_added: the number of vehicles in the system.
+
+       Road has the behaviors:
+       - populate_traffic(), which may add (simulated) vehicles to road's lanes
+       - add_ego(initial_pos, vehicle_config), add a vehicle to the road system to be simulated
+       - get_ego(): returns the vehicle in focus
+       - advance(), the simulation drive of the road system with vehicles in it
+
+       The entry point: advance(), the main routine simulate the road system by repeated calling advance(),
+       until the goal position is reached, or time out.
+
+       - Understanding of advance() (dependencies: Vehicle.generate_predictions(), Vehicle.update_state(), Vehicle.realize_state(), Vehicle.increment()
+         - by the context where it's used, it must update the simulated position of focused vehicle ego, in order to determine if the simulation can be terminated.
+         - It drive all vehicles in the system to generate_predictions to predict over the time horizon the position, and speed of all the vehicles by calling vehicle.state_at()
+         - For the ego vehicle, it update_state from the generated predictions, and call ego's realize_state based on the predictions
+         - It also call each vehicle's increment to update all the vehicles' speed, and position
+         - Question: why it has two loop over the vehicles. The first one only generate the predictions for each vehicle.
+           The second one use the generated predictions to update the states of the ego vehicle.
+       - Collision
+****** Vehicle
+       Key attributes:
+       - speed_limit
+       - initial position on the road in terms of frenet coordinates (s, lane_number)
+       - goal: the target spot on the road in terms of frenet coordinates (s, lane_number)
+       - max_acceleration
+       - lane, the lane the vehicle is in. The lane is index as number from 0, 1, 2, ...
+       - s, the s coordinate
+       - v, velocity
+       - a, acceleration
+       - state, default "CS" (constant speed) (The possible states: "KL": keep lane; "LCL" or "LCL": lane change left/right; "PLCL" or "PLCR": prepare lane change left/right.
+       - target_speed: the speed limit for the vehicle
+
+       Vehicle has the behaviors:
+       - generate_predictions(): drive the simulation of the vehicle's state at each time step in the range of time steps (horizon). It calls Vehicle.state_at(time_step_index).
+         update the predictions for the vehicle at all time steps in horizon.
+         The returned predictions is a map from vehicle id to list of {'s': s, 'lane': lane}.
+         The first entry is the position of the vehicle when the prediction starts.
+         DEPENDENCY: Vehicle.state_at(time_index)
+       - update_state(predictions): given the predictions and the current state, exercise the state machine to determine the next state, and update the state.
+         This is the key piece of code needs to implement.
+       - realize_state(predictions): simulate the state change with the predictions
+       - increment(): increment the s, and v according to the new speed and acceleration.
+       - Vehicle.state_at(time_index), predict the state of the vehicle at the time t, based on the model of the vehicle, in terms of the progression of s, and v, assuming no change to lane, and a.
+       - dispatching from realize_state:
+         - realize_constant_speed: set acceleration to be 0.
+         - realize_keep_lane: update the acceleration to be the maximum permitted by the distance in front of the vehicle ego minus the safety buffer. The key to understand is available_room.
+           As the simulation is updated in unit time, the acceleration is computed as the distance.
+         - realize_lane_change: update the new lane, and adjust the maximum acceleration for the lane changed into.
+         - realize_prep_lane_change: based on the vehicle that would be behind the vehicle ego if the vehicle ego would change the lane into, adjust the acceleration to avoid collision.
+           (Not fully understood, may need to read further.)
+
+***** The top level functions
+      #+NAME:simulate_behavior.py
+      #+BEGIN_SRC python :noweb yes :tangle ./behavior-planner-python_3/behavior-planner-practice/simulate_behavior.py :exports none
+        #!/usr/bin/env python
+        from road import Road
+        import time
+
+        # impacts default behavior for most states
+        SPEED_LIMIT       = 10
+
+        # all traffic in lane (besides ego) follow these speeds
+        LANE_SPEEDS       = [6,7,8,9]
+
+        # Number of available "cells" which should have traffic
+        TRAFFIC_DENSITY   = 0.15
+
+        # At each timestep, ego can set acceleration to value between
+        # -MAX_ACCEL and MAX_ACCEL
+        MAX_ACCEL         = 2
+
+        # s value and lane number of goal.
+        # GOAL              = (300, 3)
+        GOAL              = (200, 1)
+
+        # These affect the visualization
+        FRAMES_PER_SECOND = 1 # 4
+        AMOUNT_OF_ROAD_VISIBLE = 80 # 40
+
+        def main():
+          road = Road(SPEED_LIMIT, TRAFFIC_DENSITY, LANE_SPEEDS)
+          road.update_width = AMOUNT_OF_ROAD_VISIBLE
+          road.populate_traffic()
+          ego_config = config = {
+            'speed_limit' : SPEED_LIMIT,
+            'num_lanes' : len(LANE_SPEEDS),
+            'goal' : GOAL,
+            'max_acceleration': MAX_ACCEL
+          }
+          road.add_ego(2,0, ego_config)
+          timestep = 0
+          while road.get_ego().s <= GOAL[0]:
+            timestep += 1
+            if timestep > 150:
+              print("Taking too long to reach goal. Go faster!")
+              break
+            road.advance()
+            print(road)
+            time.sleep(float(1.0) / FRAMES_PER_SECOND)
+          ego = road.get_ego()
+          if ego.lane == GOAL[1]:
+            print("You got to the goal in {} seconds!".format(timestep))
+          else:
+            print("You missed the goal. You are in lane {} instead of {}.".format(ego.lane, GOAL[1]))
+
+        if __name__ == "__main__":
+          main()
+     #+END_SRC
+
+***** Road: implementation
+
+      #+NAME:road.py
+      #+BEGIN_SRC python :noweb yes :tangle ./behavior-planner-python_3/behavior-planner-practice/road.py :exports none
+        import random
+        from vehicle import Vehicle
+        import pdb
+
+        class Road(object):
+          update_width = 70
+          ego_rep = " *** "
+          ego_key = -1
+          def __init__(self, speed_limit, traffic_density, lane_speeds):
+            self.num_lanes = len(lane_speeds)
+            self.lane_speeds = lane_speeds
+            self.speed_limit = speed_limit
+            self.density = traffic_density
+            self.camera_center = self.update_width / 2
+            self.vehicles = {}
+            self.vehicles_added = 0
+            self.goal_lane = None
+            self.goal_s = None
+
+          def get_ego(self):
+            return self.vehicles[self.ego_key]
+
+          def populate_traffic(self):
+            start_s = max(int(self.camera_center - (self.update_width / 2)), 0)
+            for l in range(self.num_lanes):
+              lane_speed = self.lane_speeds[l]
+              vehicle_just_added = False
+              for s in range(start_s, start_s + self.update_width):
+                if vehicle_just_added:
+                  vehicle_just_added = False
+                  continue
+                if random.random() < self.density:
+                  vehicle = Vehicle(l, s, lane_speed, 0)
+                  vehicle.state = "CS"
+                  self.vehicles_added += 1
+                  self.vehicles[self.vehicles_added] = vehicle
+                  vehicle_just_added = True
+
+          def advance(self):
+            predictions = {}
+            for v_id, v in self.vehicles.items():
+              preds = v.generate_predictions()
+              predictions[v_id] = preds
+            for v_id, v in self.vehicles.items():
+              if v_id == self.ego_key:
+                v.update_state(predictions)
+                v.realize_state(predictions)
+              v.increment()
+
+          def add_ego(self, lane_num, s, config_data):
+            pdb.set_trace()
+            v_id_to_be_deleted = []
+            for v_id, v in self.vehicles.items():
+              if v.lane == lane_num and v.s == s:
+                v_id_to_be_deleted.append(v_id)
+            for v_id in v_id_to_be_deleted:
+              del self.vehicles[v_id]  # avoid another vehicle taking place of the vehicle ego.
+            ego = Vehicle(lane_num, s, self.lane_speeds[lane_num], 0)
+            ego.configure(config_data)
+            self.goal_lane = ego.goal_lane
+            self.goal_s = ego.goal_s
+            ego.state = "KL"
+            self.vehicles[self.ego_key] = ego
+
+          def cull(self):
+            ego = self.vehicles[self.ego_key]
+            center_s = ego.s
+            claimed = set([(v.lane, v.s) for v in self.vehicles.values()])
+            for v_id, v in self.vehicles.items():
+              if v.s > (center_s + self.update_width / 2) or v.s < (center_s - self.update_width / 2):
+                try:
+                  claimed.remove((v.lane,v.s))
+                except:
+                  continue
+                del self.vehicles[v_id]
+
+                placed = False
+                while not placed:
+                  lane_num = random.choice(range(self.num_lanes))
+                  ds = random.choice(range(self.update_width/2-15,self.update_width/2 -1 ))
+                  if lane_num <= self.num_lanes / 2:
+                    ds *= -1
+                  s = center_s + ds
+                  if (lane_num, s) not in claimed:
+                    placed = True
+                    speed = self.lane_speeds[lane_num]
+                    vehicle = Vehicle(lane_num, s, speed, 0)
+                    self.vehicles_added += 1
+                    self.vehicles[self.vehicles_added] = vehicle
+                    print ('adding vehicle {} at lane {} with s={}'.format(self.vehicles_added, lane_num, s))
+
+          def __repr__(self):
+            s = self.vehicles.get(self.ego_key).s
+            self.camera_center = max(s, self.update_width / 2)
+            s_min = max(int(self.camera_center - self.update_width /2), 0)
+            s_max = s_min + self.update_width
+            road = [["     " if i % 3 == 0 else "     " for ln in range(self.num_lanes)] for i in range(self.update_width)]
+            if s_min <= self.goal_s < s_max:
+              print("goal_s is {}".format(self.goal_s))
+              # pdb.set_trace()
+              road[self.goal_s - s_min][self.goal_lane] = " -G- "
+            for v_id, v in self.vehicles.items():
+              if s_min <= v.s < s_max:
+                if v_id == self.ego_key:
+                  marker = self.ego_rep
+                else:
+                  marker = " %03d " % v_id
+                try:
+                  road[int(v.s) - s_min][v.lane] = marker
+                except IndexError:
+                  print (v.s, s_min, v.lane)
+
+                  print ("IndexError")
+                  pdb.set_trace()
+                  continue
+            s = ""
+            i = s_min
+            for l in road:
+              if i % 20 == 0:
+                s += "%03d - " % i
+              else:
+                s += "      "
+              i += 1
+              s += "|" + "|".join(l) + "|"
+              s += "\n"
+            return s
+      #+END_SRC
+
+***** Vehicle: implementation
+
+      #+NAME:vehicle.py
+      #+BEGIN_SRC python :noweb yes :tangle  ./behavior-planner-python_3/behavior-planner-practice/vehicle.py :exports none
+        from cost_functions import calculate_cost
+        from collections import namedtuple
+        from copy import deepcopy
+        import pdb
+
+        Snapshot = namedtuple("Snapshot", ['lane', 's', 'v', 'a', 'state'])
+
+        class Vehicle(object):
+          L = 1
+          preferred_buffer = 6 # impacts "keep lane" behavior.
+
+          def __init__(self, lane, s, v, a):
+            self.lane = lane
+            self.s = s
+            self.v = v
+            self.a = a
+            self.state = "CS"
+            self.max_acceleration = None
+
+          # TODO - Implement this method.
+          def update_state(self, predictions):
+            """
+            Updates the "state" of the vehicle by assigning one of the
+            following values to 'self.state':
+
+            "KL" - Keep Lane
+             - The vehicle will attempt to drive its target speed, unless there is
+               traffic in front of it, in which case it will slow down.
+
+            "LCL" or "LCR" - Lane Change Left / Right
+             - The vehicle will IMMEDIATELY change lanes and then follow longitudinal
+               behavior for the "KL" state in the new lane.
+
+            "PLCL" or "PLCR" - Prepare for Lane Change Left / Right
+             - The vehicle will find the nearest vehicle in the adjacent lane which is
+               BEHIND itself and will adjust speed to try to get behind that vehicle.
+
+            INPUTS
+            - predictions
+            A dictionary. The keys are ids of other vehicles and the values are arrays
+            where each entry corresponds to the vehicle's predicted location at the
+            corresponding timestep. The FIRST element in the array gives the vehicle's
+            current position. Example (showing a car with id 3 moving at 2 m/s):
+
+            {
+              3 : [
+                {"s" : 4, "lane": 0},
+                {"s" : 6, "lane": 0},
+                {"s" : 8, "lane": 0},
+                {"s" : 10, "lane": 0},
+              ]
+            }
+
+            """
+            state = self._get_next_state(predictions)
+            # pdb.set_trace()
+            self.state = state
+
+          def lane_delta(self, direction):
+            """
+            Right turn lane number -1;
+            Left turn lane number +1
+            """
+            return -1 if direction == 'R' else 1
+
+          def _get_next_state(self, predictions):
+            states = ["KL", "LCL", "LCR", "PLCL", "PLCR"]
+            if self.lane == 0:          # no more lane reduction, right turn
+              states.remove("LCR")
+              states.remove("PLCR")
+            if self.lane == (self.lanes_available - 1):  # no more lane addition, left turn
+              states.remove("LCL")
+              states.remove("PLCL")
+
+            costs = []
+            for state in states:
+              predictions_copy = deepcopy(predictions)
+              trajectory = self._trajectory_for_state(state, predictions_copy)
+              cost = calculate_cost(self, trajectory, predictions)
+              costs.append({"state": state, "cost": cost})
+
+            best = min(costs, key=lambda c: c['cost'])
+            return best['state']
+
+          def _trajectory_for_state(self, state, predictions, horizon=5):
+            snapshot = self.snapshot()  # keep a copy of the original vehicle's all data including state
+
+            # imagine to be in the new proposed state
+            self.state = state
+            trajectory = [snapshot]
+            # pdb.set_trace()
+            for i in range(horizon):
+              self.restore_state_from_snapshot(snapshot)
+              self.state = state
+              assert 0 <= self.lane < self.lanes_available, "Wrong lane value before realize_state in _trajectory_for_state: {}".format(self.lane)
+              self.realize_state(predictions)  # It seems to me that the realize_state may need to into consideration of the horizon time step
+              assert 0 <= self.lane < self.lanes_available, "Wrong lane value after realize_state in _trajectory_for_state: {}. The proposed state: {}.".format(
+                self.lane, self.state)
+              self.increment(dt=i)          # also should this be taken into consideration of horizon time step
+              trajectory.append(self.snapshot())
+
+              # need to remove the first position in the list of predicted positions for each vehicle, why?
+              # pdb.set_trace()           # check out the structure of predictions, and the meaning of v.pop()
+              # The follow code may be remove, if there is no prediction at the time zero when doing generate_predictions
+              for vehicle_id, position_list in predictions.items():
+                position_list.pop()     # as the first one is the position before prediction start.
+            # restore state from snapshot
+            self.restore_state_from_snapshot(snapshot)
+            return trajectory           # predictions changed as side effect
+
+          def snapshot(self):
+            return Snapshot(self.lane, self.s, self.v, self.a, self.lane)
+
+          def restore_state_from_snapshot(self, snapshot):
+            self.lane = snapshot.lane
+            self.s = snapshot.s
+            self.v = snapshot.v
+            self.a = snapshot.a
+            self.state = snapshot.state
+
+          def configure(self, road_data):
+            """
+            Called by simulator before simulation begins. Sets various
+            parameters which will impact the ego vehicle.
+            """
+            self.target_speed = road_data['speed_limit']
+            self.lanes_available = road_data["num_lanes"]
+            self.max_acceleration = road_data['max_acceleration']
+            self.goal_s, self.goal_lane = road_data['goal']
+
+          def __repr__(self):
+            s = "s:    {}\n".format(self.s)
+            s +="lane: {}\n".format(self.lane)
+            s +="v:    {}\n".format(self.v)
+            s +="a:    {}\n".format(self.a)
+            return s
+
+          def increment(self, dt=1):
+            self.s += self.v * dt
+            self.v += self.a * dt
+
+          def state_at(self, t):
+            """
+            Predicts state of vehicle in t seconds (assuming constant acceleration)
+            """
+            s = self.s + self.v * t + self.a * t * t / 2
+            v = self.v + self.a * t
+            return self.lane, s, v, self.a
+
+          def collides_with(self, other, at_time=0):
+            """
+            Simple collision detection.
+            """
+            l,   s,   v,   a = self.state_at(at_time)
+            l_o, s_o, v_o, a_o = other.state_at(at_time)
+            return l == l_o and abs(s-s_o) <= L
+
+          def will_collide_with(self, other, timesteps):
+            for t in range(timesteps+1):
+              if self.collides_with(other, t):
+                return True, t
+            return False, None
+
+          def realize_state(self, predictions):
+            """
+            Given a state, realize it by adjusting acceleration and lane.
+            Note - lane changes happen instantaneously.
+            """
+            state = self.state
+            if   state == "CS"  : self.realize_constant_speed()
+            elif state == "KL"  : self.realize_keep_lane(predictions)
+            elif state == "LCL" : self.realize_lane_change(predictions, "L")
+            elif state == "LCR" : self.realize_lane_change(predictions, "R")
+            elif state == "PLCL": self.realize_prep_lane_change(predictions, "L")
+            elif state == "PLCR": self.realize_prep_lane_change(predictions, "R")
+
+          def realize_constant_speed(self):
+            self.a = 0
+
+          def _max_accel_for_lane(self, predictions, lane, s):
+            delta_v_til_target = self.target_speed - self.v
+            max_acc = min(self.max_acceleration, delta_v_til_target)
+            in_front = [v for (v_id, v) in predictions.items() if v[0]['lane'] == lane and v[0]['s'] > s ]
+            if len(in_front) > 0:
+              leading = min(in_front, key=lambda v: v[0]['s'] - s)
+              next_pos = leading[1]['s']
+              my_next = s + self.v
+              separation_next = next_pos - my_next
+              available_room = separation_next - self.preferred_buffer
+              max_acc = min(max_acc, available_room)
+            return max_acc
+
+          def realize_keep_lane(self, predictions):
+            self.a = self._max_accel_for_lane(predictions, self.lane, self.s)
+
+          def realize_lane_change(self, predictions, direction):
+            self.lane += self.lane_delta(direction)
+            assert 0 <= self.lane < self.lanes_available, "Wrong lane value in realize_lane_changetra: {}. The proposed state: {}.".format(
+                self.lane, self.state)
+
+            self.a = self._max_accel_for_lane(predictions, self.lane, self.s)
+
+          def realize_prep_lane_change(self, predictions, direction):
+            lane = self.lane + self.lane_delta(direction)
+            ids_and_vehicles = [(v_id, v) for (v_id, v) in predictions.items() if v[0]['lane'] == lane and v[0]['s'] <= self.s]
+            if len(ids_and_vehicles) > 0:
+              vehicles = [v[1] for v in ids_and_vehicles]
+
+              nearest_behind = max(ids_and_vehicles, key=lambda v: v[1][0]['s'])
+
+              print ("nearest behind : {}".format(nearest_behind))
+              nearest_behind = nearest_behind[1]
+              target_vel = nearest_behind[1]['s'] - nearest_behind[0]['s']
+              delta_v = self.v - target_vel
+              delta_s = self.s - nearest_behind[0]['s']
+              if delta_v != 0:
+                print ("delta_v {}".format(delta_v))
+                print ("delta_s {}".format(delta_s))
+                time = -2 * delta_s / delta_v
+                if time == 0:
+                  a = self.a
+                else:
+                  a = delta_v / time
+                print ("raw a is {}".format(a))
+                if a > self.max_acceleration: a = self.max_acceleration
+                if a < -self.max_acceleration: a = -self.max_acceleration
+                self.a = a
+                print ("time : {}".format(time))
+                print ("a: {}".format(self.a))
+              else :
+                min_acc = max(-self.max_acceleration, -delta_s)
+                self.a = min_acc
+
+          def generate_predictions(self, horizon=10):
+            predictions = []
+            for i in range(horizon):
+              lane, s, v, a = self.state_at(i)
+              predictions.append({'s':s, 'lane': lane})
+            return predictions
+      #+END_SRC
+***** Cost_functions
+      #+NAME:cost_functions
+      #+BEGIN_SRC python :noweb yes :tangle ./behavior-planner-python_3/behavior-planner-practice/cost_functions.py :exports none
+        from __future__ import division
+        from collections import namedtuple
+        from math import sqrt, exp
+        import pdb
+
+        TrajectoryData = namedtuple("TrajectoryData", [
+            'proposed_lane',
+            'avg_speed',
+            'max_acceleration',
+            'rms_acceleration',
+            'closest_approach',
+            'end_distance_to_goal',
+            'end_lanes_from_goal',
+            'collides',
+        ])
+
+        # priority levels for costs
+        COLLISION  = 10 ** 6
+        DANGER     = 10 ** 5
+        REACH_GOAL = 10 ** 5
+        COMFORT    = 10 ** 4
+        EFFICENCY  = 10 ** 2
+
+        DESIRED_BUFFER = 1.5            # time stamps
+        PLANNING_HORIZON = 2
+
+        DEBUG = False
+
+        # External interface:
+        def calculate_cost(vehicle, trajectory, predictions, verbose=False):
+            trajectory_data = get_helper_data(vehicle, trajectory, predictions)
+            cost = 0.0
+            for cost_function in [
+                    distance_from_goal_lane,
+                    inefficiency_cost,
+                    collision_cost,
+                    buffer_cost,
+                    change_lane_cost
+            ]:
+                new_cost = cost_function(vehicle, trajectory, predictions, trajectory_data)
+                if DEBUG or verbose:
+                    print("{} has cost {} for lane {}".format(cost_function.__name__, new_cost, trajectory[-1].lane))
+                    # pdb.set_trace()
+                cost += new_cost
+            return cost
+
+            pass
+
+
+        # Cost functions:
+        def distance_from_goal_lane(vehicle, trajectory, predictions, data):
+            """
+            cost = REACH_GOAL * (5*data.end_lanes_from_goal/(abs(data.end_distance_to_goal)/data.avg_speed))
+            proportional to the number of lanes away from the goal lane;
+            inversely proportional to the travel time to the goal
+            """
+            distance = abs(data.end_distance_to_goal)
+            distance = max(distance, 1.0)
+            time_to_goal = float(distance) / data.avg_speed
+            lanes = data.end_lanes_from_goal
+            multiplier = float(5 * lanes / time_to_goal)
+            cost = multiplier * REACH_GOAL
+            return cost
+            pass
+
+        def inefficiency_cost(vehicle, trajectory, predictions, data):
+            """
+            Proportional to the difference to the target speed
+            """
+            cost = ((float(vehicle.target_speed - data.avg_speed)
+                     /vehicle.target_speed)**2
+            ) * EFFICENCY
+            return cost
+            pass
+
+        def collision_cost(vehicle, trajectory, predictions, data):
+            """
+            Exponentially inverse to the time when collision happens.
+            """
+            if data.collides:
+                time_til_collision = data.collides['at']
+                exponent = (float(time_til_collision))**2
+                return exp(-exponent) * COLLISION
+            else:
+                return 0
+
+        def buffer_cost(vehicle, trajectory, predictions, data):
+            """
+            The cost of lack of buffer between vehicles.
+            When there is sufficient buffer, cost 0.
+            Else, the cost is closer to 1 (the maximum), when the buffer is closer to 0.
+            """
+            if data.closest_approach == 0:
+                return 10 * DANGER
+            else:
+                timesteps_away = data.closest_approach / data.avg_speed
+                if DESIRED_BUFFER < timesteps_away:
+                    return 0.0
+                else:
+                    return (1.0 - (timesteps_away - DESIRED_BUFFER)**2) * DANGER
+
+        def change_lane_cost(vehicle, trajectory, predictions, data):
+            """
+            Penalizes lance changes AWAY from the goal lane and rewards lane changes TOWARDS the goal line.
+            """
+            cost = 0
+            proposed_lane = data.end_lanes_from_goal
+            cur_lanes = trajectory[0].lane
+            if cur_lanes < proposed_lane:
+                cost = COMFORT
+            elif proposed_lane < cur_lanes:
+                cost = -COMFORT
+            if cost != 0:
+                print("!! \n \ncost for lane change is {}\n\n".format(cost))
+            return cost
+
+
+        # Support functions:
+        def get_helper_data(vehicle, trajectory, predictions):
+            """
+            Compute TrajectoryData
+            """
+            current_snapshot = trajectory[0]
+            first_snapshot = trajectory[1]
+            last_snapshot = trajectory[-1]
+            end_distance_to_goal = vehicle.goal_s - last_snapshot.s
+            end_lanes_from_goal = abs(vehicle.goal_lane - last_snapshot.lane)
+            delta_time = float(len(trajectory))
+
+            proposed_lane = first_snapshot.lane
+            avg_speed = (last_snapshot.s - current_snapshot.s)/delta_time
+
+            accels = []
+            closest_approach = 999999
+            collides = False
+            last_snap = trajectory[0]
+            filtered = filter_predictions_by_lane(predictions, proposed_lane)
+
+            for i, snapshot in enumerate(trajectory[1:PLANNING_HORIZON+1], 1):
+                lane, s, v, a = unpack_snapshot(snapshot)
+                accels.append(a)
+                for v_id, v in filtered.items():
+                    state = v[i]
+                    last_state = v[i-1]
+                    vehicle_colides = check_collision(snapshot, last_state['s'], state['s'])
+                    if vehicle_colides:
+                        # collides = True
+                        collides = {"at": i}
+                    dist = abs(state['s'] - s)
+                    if dist < closest_approach:
+                        closest_approach = dist
+                last_snap = snapshot
+            max_accel = max(accels, key=lambda a: abs(a))
+            rms_accels = [a**2 for a in accels]
+            num_accels = len(rms_accels)
+            rms_acceleration = float(sum(rms_accels))/num_accels
+
+            return TrajectoryData(
+                proposed_lane,
+                avg_speed,
+                max_accel,
+                rms_acceleration,
+                closest_approach,
+                end_distance_to_goal,
+                end_lanes_from_goal,
+                collides
+            )
+
+        def check_collision(snapshot, s_previous, s_now):
+            """
+            ??
+            Need to clarify the meaning of the parameters first.
+            """
+            if s_previous < snapshot.s:
+                return snapshot.s <= s_now
+            if snapshot.s < s_previous:
+                return s_now <= snapshot.s
+            if snapshot.s == s_previous:
+                return (s_now - s_previous) <= snapshot.v
+            raise ValueError
+
+        def filter_predictions_by_lane(predictions, lane):
+            filtered = {}
+            for v_id, predicted_traj in predictions.items():
+                if predicted_traj[0]['lane'] == lane and v_id != -1:
+                    filtered[v_id] = predicted_traj
+            return filtered
+
+        def unpack_snapshot(snapshot):
+            return snapshot.lane, snapshot.s, snapshot.v, snapshot.a
+      #+END_SRC
+
+***** Sketch to update_state algorithm
+
+      #+NAME:state_transition_pseudo
+      #+BEGIN_SRC python :noweb yes :tangle :exports none
+        if goal_lane == vehicle.lane:
+            keep the current lane
+        else if the current state is not prepare lane change
+        change to prepare to lane change
+        else
+        lane change
+      #+END_SRC
+      
+
+
+*** Implementation in C++
+
+    High lever control of the road simulation with ego vehicle.
+
+    #+NAME:main-behavior-planner
+    #+BEGIN_SRC C++ :noweb yes :tangle :exports none
+          #include "road.h"
+      #include "vehicle.h"
+      #include <iostream>
+      #include <fstream>
+      #include <math.h>
+      #include <vector>
+
+      using namespace std;
+
+      //impacts default behavior for most states
+      int SPEED_LIMIT = 10;
+
+      //all traffic in lane (besides ego) follow these speeds
+      vector<int> LANE_SPEEDS = {6,7,8,9};
+
+      //Number of available "cells" which should have traffic
+      double TRAFFIC_DENSITY   = 0.15;
+
+      // At each timestep, ego can set acceleration to value between
+      // -MAX_ACCEL and MAX_ACCEL
+      int MAX_ACCEL = 2;
+
+      // s value and lane number of goal.
+      vector<int> GOAL = {300, 0};
+
+      // These affect the visualization
+      int FRAMES_PER_SECOND = 4;
+      int AMOUNT_OF_ROAD_VISIBLE = 40;
+
+      int main() {
+
+        Road road = Road(SPEED_LIMIT, TRAFFIC_DENSITY, LANE_SPEEDS);
+
+        road.update_width = AMOUNT_OF_ROAD_VISIBLE;
+
+        road.populate_traffic();
+
+        int goal_s = 300;
+        int goal_lane = 0;
+
+        //configuration data: speed limit, num_lanes, goal_s, goal_lane, max_acceleration
+
+        int num_lanes = LANE_SPEEDS.size();
+        vector<int> ego_config = {SPEED_LIMIT,num_lanes,goal_s,goal_lane,MAX_ACCEL};
+
+        road.add_ego(2,0, ego_config);
+        int timestep = 0;
+
+        while (road.get_ego().s <= GOAL[0]) {
+          timestep++;
+          if (timestep > 35) {
+            break;
+          }
+          road.advance();
+          road.display(timestep);
+          //time.sleep(float(1.0) / FRAMES_PER_SECOND);
+        }
+        Vehicle ego = road.get_ego();
+        if (ego.lane == GOAL[1])
+        {
+          cout << "You got to the goal in " << timestep << " seconds!" << endl;
+          if(timestep > 35)
+            {
+                cout << "But it took too long to reach the goal. Go faster!" << endl;
+            }
+        }
+        else
+        {
+          cout << "You missed the goal. You are in lane " << ego.lane << " instead of " << GOAL[1] << "." << endl;
+        }
+
+        return 0;
+      }
+    #+END_SRC
+
+    The declaration of class Vehicle
+    #+NAME:vehicle.h
+    #+BEGIN_SRC C++ :noweb yes :tangle :exports none
+      #ifndef VEHICLE_H
+      #define VEHICLE_H
+      #include <iostream>
+      #include <random>
+      #include <sstream>
+      #include <fstream>
+      #include <math.h>
+      #include <vector>
+      #include <map>
+      #include <string>
+      #include <iterator>
+
+      using namespace std;
+
+      class Vehicle {
+      public:
+        struct collider{
+          bool collision ; // is there a collision?
+          int  time; // time collision happens
+        };
+
+        int L = 1;                    // what's the meaning of L?
+        int preferred_buffer = 6; // impacts "keep lane" behavior.
+        int lane;
+        int s;
+        int v;
+        int a;
+        int target_speed;
+        int lanes_available;
+        int max_acceleration;
+        int goal_lane;
+        int goal_s;
+        string state;
+
+        /**
+        ,* Constructor
+        ,*/
+        Vehicle(int lane, int s, int v, int a);
+
+        /**
+        ,* Destructor
+        ,*/
+        virtual ~Vehicle();
+
+        void update_state(map<int, vector <vector<int> > > predictions);
+        void configure(vector<int> road_data);
+        string display();
+        void increment(int dt);
+        vector<int> state_at(int t);
+        bool collides_with(Vehicle other, int at_time);
+        collider will_collide_with(Vehicle other, int timesteps);
+        void realize_state(map<int, vector < vector<int> > > predictions);
+        void realize_constant_speed();
+        int _max_accel_for_lane(map<int,vector<vector<int> > > predictions, int lane, int s);
+        void realize_keep_lane(map<int, vector< vector<int> > > predictions);
+        void realize_lane_change(map<int,vector< vector<int> > > predictions, string direction);
+        void realize_prep_lane_change(map<int,vector< vector<int> > > predictions, string direction);
+        vector<vector<int> > generate_predictions(int horizon);
+      };
+      #endif
+    #+END_SRC
+
+    Implementation of Vehicle class.
+    to be implemented: udpate_state here, by implementing a state machine, based on the predictions.
+
+    below is the data available for state transition decision:
+
+    target_speed = road_data[0];
+    lanes_available = road_data[1];
+    goal_s = road_data[2];
+    goal_lane = road_data[3];
+    max_acceleration = road_data[4];
+
+    #+NAME:vehicle.cpp
+    #+BEGIN_SRC C++ :noweb yes :tangle :exports none
+      #include <iostream>
+      #include "vehicle.h"
+      #include <iostream>
+      #include <math.h>
+      #include <map>
+      #include <string>
+      #include <iterator>
+
+      /**
+       ,* Initializes Vehicle
+       ,*/
+      Vehicle::Vehicle(int lane, int s, int v, int a) {
+          this->lane = lane;
+          this->s = s;
+          this->v = v;
+          this->a = a;
+          state = "CS";
+          max_acceleration = -1;
+      }
+
+      Vehicle::~Vehicle() {}
+
+      // TODO - Implement this method.
+      void Vehicle::update_state(map<int,vector < vector<int> > > predictions) {
+        /*
+          Updates the "state" of the vehicle by assigning one of the
+          following values to 'self.state':
+
+          "KL" - Keep Lane
+           - The vehicle will attempt to drive its target speed, unless there is
+             traffic in front of it, in which case it will slow down.
+
+          "LCL" or "LCR" - Lane Change Left / Right
+           - The vehicle will IMMEDIATELY change lanes and then follow longitudinal
+             behavior for the "KL" state in the new lane.
+
+          "PLCL" or "PLCR" - Prepare for Lane Change Left / Right
+           - The vehicle will find the nearest vehicle in the adjacent lane which is
+             BEHIND itself and will adjust speed to try to get behind that vehicle.
+
+          INPUTS
+          - predictions
+          A dictionary. The keys are ids of other vehicles and the values are arrays
+          where each entry corresponds to the vehicle's predicted location at the
+          corresponding timestep. The FIRST element in the array gives the vehicle's
+          current position. Example (showing a car with id 3 moving at 2 m/s):
+
+          {
+            3 : [
+              {"s" : 4, "lane": 0},
+              {"s" : 6, "lane": 0},
+              {"s" : 8, "lane": 0},
+              {"s" : 10, "lane": 0},
+            ]
+          }
+
+          ,*/
+          state = "KL"; // this is an example of how you change state.
+
+
+      }
+
+      void Vehicle::configure(vector<int> road_data) {
+        /*
+          Called by simulator before simulation begins. Sets various
+          parameters which will impact the ego vehicle.
+          ,*/
+          target_speed = road_data[0];
+          lanes_available = road_data[1];
+          goal_s = road_data[2];
+          goal_lane = road_data[3];
+          max_acceleration = road_data[4];
+      }
+
+      string Vehicle::display() {
+
+        ostringstream oss;
+
+        oss << "s:    " << this->s << "\n";
+          oss << "lane: " << this->lane << "\n";
+          oss << "v:    " << this->v << "\n";
+          oss << "a:    " << this->a << "\n";
+
+          return oss.str();
+      }
+
+      void Vehicle::increment(int dt = 1) {
+
+        this->s += this->v * dt;
+          this->v += this->a * dt;
+      }
+
+      vector<int> Vehicle::state_at(int t) {
+
+        /*
+          Predicts state of vehicle in t seconds (assuming constant acceleration)
+          ,*/
+          int s = this->s + this->v * t + this->a * t * t / 2;
+          int v = this->v + this->a * t;
+          return {this->lane, s, v, this->a};
+      }
+
+      bool Vehicle::collides_with(Vehicle other, int at_time) {
+
+        /*
+          Simple collision detection.
+          ,*/
+          vector<int> check1 = state_at(at_time);
+          vector<int> check2 = other.state_at(at_time);
+          return (check1[0] == check2[0]) && (abs(check1[1]-check2[1]) <= L);
+      }
+
+      Vehicle::collider Vehicle::will_collide_with(Vehicle other, int timesteps) {
+        ////////////////////////////////////////////////////////
+        // Determine if there will be an eventual collision.  //
+        ////////////////////////////////////////////////////////
+
+        Vehicle::collider collider_temp;
+        collider_temp.collision = false;
+        collider_temp.time = -1;
+
+        for (int t = 0; t < timesteps+1; t++)
+        {
+              if( collides_with(other, t) )
+              {
+            collider_temp.collision = true;
+            collider_temp.time = t;
+                return collider_temp;
+            }
+        }
+
+        return collider_temp;
+      }
+
+      void Vehicle::realize_state(map<int,vector < vector<int> > > predictions) {
+
+        /*
+          Given a state, realize it by adjusting acceleration and lane.
+          Note - lane changes happen instantaneously.
+          ,*/
+          string state = this->state;
+          if(state.compare("CS") == 0)
+          {
+            realize_constant_speed();
+          }
+          else if(state.compare("KL") == 0)
+          {
+            realize_keep_lane(predictions);
+          }
+          else if(state.compare("LCL") == 0)
+          {
+            realize_lane_change(predictions, "L");
+          }
+          else if(state.compare("LCR") == 0)
+          {
+            realize_lane_change(predictions, "R");
+          }
+          else if(state.compare("PLCL") == 0)
+          {
+            realize_prep_lane_change(predictions, "L");
+          }
+          else if(state.compare("PLCR") == 0)
+          {
+            realize_prep_lane_change(predictions, "R");
+          }
+
+      }
+
+      void Vehicle::realize_constant_speed() {
+        a = 0;
+      }
+
+      int Vehicle::_max_accel_for_lane(map<int,vector<vector<int> > > predictions, int lane, int s) {
+
+        int delta_v_til_target = target_speed - v;
+        int max_acc = min(max_acceleration, delta_v_til_target);
+
+        map<int, vector<vector<int> > >::iterator it = predictions.begin();
+        vector<vector<vector<int> > > in_front;
+        while(it != predictions.end()) {
+            int v_id = it->first;
+            vector<vector<int> > v = it->second;
+            if((v[0][0] == lane) && (v[0][1] > s))
+              {
+                in_front.push_back(v);
+              }
+              it++;
+          }
+        if(in_front.size() > 0)
+          {
+            int min_s = 1000;
+            vector<vector<int>> leading = {};
+            for(int i = 0; i < in_front.size(); i++)
+            {
+              if((in_front[i][0][1]-s) < min_s)
+              {
+                min_s = (in_front[i][0][1]-s);
+                leading = in_front[i];
+              }
+            }
+            int next_pos = leading[1][1];
+            int my_next = s + this->v;
+            int separation_next = next_pos - my_next;
+            int available_room = separation_next - preferred_buffer;
+            max_acc = min(max_acc, available_room);
+          }
+          return max_acc;
+      }
+
+      void Vehicle::realize_keep_lane(map<int,vector< vector<int> > > predictions) {
+        this->a = _max_accel_for_lane(predictions, this->lane, this->s);
+      }
+
+      void Vehicle::realize_lane_change(map<int,vector< vector<int> > > predictions, string direction) {
+        int delta = -1;
+          if (direction.compare("L") == 0)
+          {
+            delta = 1;
+          }
+          this->lane += delta;
+          int lane = this->lane;
+          int s = this->s;
+          this->a = _max_accel_for_lane(predictions, lane, s);
+      }
+
+      void Vehicle::realize_prep_lane_change(map<int,vector<vector<int> > > predictions, string direction) {
+        int delta = -1;
+          if (direction.compare("L") == 0)
+          {
+            delta = 1;
+          }
+          int lane = this->lane + delta;
+
+          map<int, vector<vector<int> > >::iterator it = predictions.begin();
+          vector<vector<vector<int> > > at_behind;
+          while(it != predictions.end())
+          {
+            int v_id = it->first;
+              vector<vector<int> > v = it->second;
+
+              if((v[0][0] == lane) && (v[0][1] <= this->s))
+              {
+                at_behind.push_back(v);
+
+              }
+              it++;
+          }
+          if(at_behind.size() > 0)
+          {
+
+            int max_s = -1000;
+            vector<vector<int> > nearest_behind = {};
+            for(int i = 0; i < at_behind.size(); i++)
+            {
+              if((at_behind[i][0][1]) > max_s)
+              {
+                max_s = at_behind[i][0][1];
+                nearest_behind = at_behind[i];
+              }
+            }
+            int target_vel = nearest_behind[1][1] - nearest_behind[0][1];
+            int delta_v = this->v - target_vel;
+            int delta_s = this->s - nearest_behind[0][1];
+            if(delta_v != 0) {
+              int time = -2 * delta_s/delta_v;
+              int a;
+              if (time == 0) {
+                a = this->a;
+              } else {
+                a = delta_v/time;
+              }
+              if(a > this->max_acceleration) {
+                a = this->max_acceleration;
+              }
+              if(a < -this->max_acceleration) {
+                a = -this->max_acceleration;
+              }
+              this->a = a;
+            } else {
+              int my_min_acc = max(-this->max_acceleration,-delta_s);
+              this->a = my_min_acc;
+            }
+          }
+      }
+
+      vector<vector<int> > Vehicle::generate_predictions(int horizon = 10) {
+        vector<vector<int> > predictions;
+          for( int i = 0; i < horizon; i++) {
+            vector<int> check1 = state_at(i);
+            vector<int> lane_s = {check1[0], check1[1]};
+            predictions.push_back(lane_s);
+          }
+          return predictions;
+      }
+    #+END_SRC
+
+
+    #+NAME:road.h
+    #+BEGIN_SRC C++ :noweb yes :tangle :exports none
+      #include <iostream>
+      #include <random>
+      #include <sstream>
+      #include <fstream>
+      #include <math.h>
+      #include <vector>
+      #include <set>
+      #include <map>
+      #include <string>
+      #include <iterator>
+      #include "vehicle.h"
+
+      using namespace std;
+
+      class Road {
+      public:
+        int update_width = 70;
+        string ego_rep = " *** ";
+        int ego_key = -1;
+        int num_lanes;
+        vector<int> lane_speeds;
+        int speed_limit;
+        double density;
+        int camera_center;
+        map<int, Vehicle> vehicles;
+        int vehicles_added = 0;
+
+        /**
+         ,* Constructor
+         ,*/
+        Road(int speed_limit, double traffic_density, vector<int> lane_speeds);
+
+        /**
+         ,* Destructor
+         ,*/
+        virtual ~Road();
+
+        Vehicle get_ego();
+        void populate_traffic();
+        void advance();
+        void display(int timestep);
+        void add_ego(int lane_num, int s, vector<int> config_data);
+        void cull();
+      };
+    #+END_SRC
+
+    #+NAME:road.cpp
+    #+BEGIN_SRC C++ :noweb yes :tangle :exports none
+      #include <iostream>
+      #include "road.h"
+      #include "vehicle.h"
+      #include <iostream>
+      #include <math.h>
+      #include <map>
+      #include <string>
+      #include <iterator>
+
+      /**
+       ,* Initializes Road
+       ,*/
+      Road::Road(int speed_limit, double traffic_density, vector<int> lane_speeds) {
+          this->num_lanes = lane_speeds.size();
+          this->lane_speeds = lane_speeds;
+          this->speed_limit = speed_limit;
+          this->density = traffic_density;
+          this->camera_center = this->update_width/2;
+      }
+
+      Road::~Road() {}
+
+      Vehicle Road::get_ego() {
+        return this->vehicles.find(this->ego_key)->second;
+      }
+
+      void Road::populate_traffic() {
+        int start_s = max(this->camera_center - (this->update_width/2), 0);
+        for (int l = 0; l < this->num_lanes; l++) {
+          int lane_speed = this->lane_speeds[l];
+          bool vehicle_just_added = false;
+          for(int s = start_s; s < start_s+this->update_width; s++) {
+            if(vehicle_just_added) {
+              vehicle_just_added = false;
+            }
+            if(((double) rand() / (RAND_MAX)) < this->density) {
+              Vehicle vehicle = Vehicle(l,s,lane_speed,0);
+              vehicle.state = "CS";
+              this->vehicles_added += 1;
+              this->vehicles.insert(std::pair<int,Vehicle>(vehicles_added,vehicle));
+              vehicle_just_added = true;
+            }
+          }
+        }
+      }
+
+      void Road::advance() {
+        map<int ,vector<vector<int> > > predictions;
+        map<int, Vehicle>::iterator it = this->vehicles.begin();
+        while(it != this->vehicles.end()) {
+              int v_id = it->first;
+              vector<vector<int> > preds = it->second.generate_predictions(10);
+              predictions[v_id] = preds;
+              it++;
+          }
+        it = this->vehicles.begin();
+        while(it != this->vehicles.end()) {
+            int v_id = it->first;
+              if(v_id == ego_key) {
+                it->second.update_state(predictions);
+                it->second.realize_state(predictions);
+              }
+              it->second.increment(1);
+              it++;
+          }
+      }
+
+      void Road::display(int timestep) {
+        Vehicle ego = this->vehicles.find(this->ego_key)->second;
+        int s = ego.s;
+        string state = ego.state;
+
+        this->camera_center = max(s, this->update_width/2);
+        int s_min = max(this->camera_center - this->update_width/2, 0);
+        int s_max = s_min + this->update_width;
+
+        vector<vector<string> > road;
+
+        for(int i = 0; i < this->update_width; i++) {
+            vector<string> road_lane;
+            for(int ln = 0; ln < this->num_lanes; ln++) {
+              road_lane.push_back("     ");
+            }
+            road.push_back(road_lane);
+        }
+
+        map<int, Vehicle>::iterator it = this->vehicles.begin();
+        while(it != this->vehicles.end()) {
+          int v_id = it->first;
+          Vehicle v = it->second;
+
+          if(s_min <= v.s && v.s < s_max) {
+            string marker = "";
+            if(v_id == this->ego_key) {
+              marker = this->ego_rep;
+            } else {
+              stringstream oss;
+              stringstream buffer;
+              buffer << " ";
+              oss << v_id;
+              for(int buffer_i = oss.str().length(); buffer_i < 3; buffer_i++) {
+                buffer << "0";
+              }
+              buffer << oss.str() << " ";
+              marker = buffer.str();
+            }
+            road[int(v.s - s_min)][int(v.lane)] = marker;
+          }
+          it++;
+        }
+        ostringstream oss;
+        oss << "+Meters ======================+ step: " << timestep << endl;
+        int i = s_min;
+        for(int lj = 0; lj < road.size(); lj++) {
+          if(i%20 ==0) {
+            stringstream buffer;
+            stringstream dis;
+            dis << i;
+            for(int buffer_i = dis.str().length(); buffer_i < 3; buffer_i++) {
+              buffer << "0";
+            }
+            oss << buffer.str() << dis.str() << " - ";
+          } else {
+            oss << "      ";
+          }
+          i++;
+          for(int li = 0; li < road[0].size(); li++) {
+            oss << "|" << road[lj][li];
+          }
+          oss << "|";
+          oss << "\n";
+        }
+        cout << oss.str();
+      }
+
+      void Road::add_ego(int lane_num, int s, vector<int> config_data) {
+        map<int, Vehicle>::iterator it = this->vehicles.begin();
+        while(it != this->vehicles.end()) {
+          int v_id = it->first;
+          Vehicle v = it->second;
+          if(v.lane == lane_num && v.s == s) {
+            this->vehicles.erase(v_id);
+          }
+          it++;
+        }
+        Vehicle ego = Vehicle(lane_num, s, this->lane_speeds[lane_num], 0);
+        ego.configure(config_data);
+        ego.state = "KL";
+        this->vehicles.insert(std::pair<int,Vehicle>(ego_key,ego));
+      }
+
+      void Road::cull() {
+        Vehicle ego = this->vehicles.find(this->ego_key)->second;
+        int center_s = ego.s;
+        set<vector<int>> claimed;
+
+        map<int, Vehicle>::iterator it = this->vehicles.begin();
+        while(it != this->vehicles.end()) {
+          int v_id = it->first;
+          Vehicle v = it->second;
+          vector<int> claim_pair = {v.lane,v.s};
+          claimed.insert(claim_pair);
+          it++;
+        }
+        it = this->vehicles.begin();
+        while(it != this->vehicles.end()) {
+          int v_id = it->first;
+          Vehicle v = it->second;
+          if( (v.s > (center_s + this->update_width / 2) ) || (v.s < (center_s - this->update_width / 2) ) ) {
+            try {
+              claimed.erase({v.lane,v.s});
+            }
+            catch (const exception& e) {
+              continue;
+            }
+            this->vehicles.erase(v_id);
+
+            bool placed = false;
+            while(!placed) {
+              int lane_num = rand() % this->num_lanes;
+              int ds = rand() % 14 + (this->update_width/2-15);
+              if(lane_num > this->num_lanes/2) {
+                ds*=-1;
+              }
+              int s = center_s + ds;
+              if(claimed.find({lane_num,s}) != claimed.end()) {
+                placed = true;
+                int speed = lane_speeds[lane_num];
+                Vehicle vehicle = Vehicle(lane_num, s, speed, 0);
+                this->vehicles_added++;
+                this->vehicles.insert(std::pair<int,Vehicle>(vehicles_added,vehicle));
+                cout << "adding vehicle "<< this->vehicles_added << " at lane " << lane_num << " with s=" << s << endl;
+              }
+            }
+          }
+          it++;
+        }
+      }
+    #+END_SRC
