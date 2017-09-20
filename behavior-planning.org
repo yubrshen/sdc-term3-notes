@@ -368,12 +368,12 @@ Path planning consists of:
         MAX_ACCEL         = 2
 
         # s value and lane number of goal.
-        # GOAL              = (300, 3)
-        GOAL              = (200, 1)
+        # GOAL            = (300, 3)
+        GOAL              = (300, 0)    # (s, lane)
 
         # These affect the visualization
         FRAMES_PER_SECOND = 1 # 4
-        AMOUNT_OF_ROAD_VISIBLE = 80 # 40
+        AMOUNT_OF_ROAD_VISIBLE = 40 # 40
 
         def main():
           road = Road(SPEED_LIMIT, TRAFFIC_DENSITY, LANE_SPEEDS)
@@ -385,7 +385,7 @@ Path planning consists of:
             'goal' : GOAL,
             'max_acceleration': MAX_ACCEL
           }
-          road.add_ego(2,0, ego_config)
+          road.add_ego(0, 0, ego_config)  # lane, s, config
           timestep = 0
           while road.get_ego().s <= GOAL[0]:
             timestep += 1
@@ -459,7 +459,7 @@ Path planning consists of:
               v.increment()
 
           def add_ego(self, lane_num, s, config_data):
-            pdb.set_trace()
+            # pdb.set_trace()
             v_id_to_be_deleted = []
             for v_id, v in self.vehicles.items():
               if v.lane == lane_num and v.s == s:
@@ -805,7 +805,7 @@ Path planning consists of:
         DANGER     = 10 ** 5
         REACH_GOAL = 10 ** 5
         COMFORT    = 10 ** 4
-        EFFICENCY  = 10 ** 2
+        EFFICENCY  = 10 ** 4 # 2
 
         DESIRED_BUFFER = 1.5            # time stamps
         PLANNING_HORIZON = 2
