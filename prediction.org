@@ -1,0 +1,1344 @@
+#+TITLE: Prediction
+
+* Very good summary/syllables
+
+  [[https://classroom.udacity.com/nanodegrees/nd013/parts/6047fe34-d93c-4f50-8336-b70ef10cb4b2/modules/27800789-bc8e-4adc-afe0-ec781e82ceae/lessons/a883a337-51c8-471b-a8cf-3911dc429166/concepts/043780c3-f412-4ed4-9212-7e457804f175][Summary of Data Driven and Model Based Approaches]]
+
+  This is rarely good summary from Merceeds-Benz/Udacity, reading it would make my following notes mostly redundant.
+
+
+* The definition of prediction (moving object intent prediction/classification)
+
+  Given observations of moving objects predict the likely future positions/trajectories.
+  The prediction is often expressed in terms of probabilities about the beliefs of the various possible predictions of an moving object.
+
+* The intuition of predictions
+  By observing a moving object's partial trajectory, it's future can be predicted.
+  The longer the partial trajectory, the more certain of the prediction. With the long enough trajectory, it can be certain of the prediction.
+  But the value of prediction requires the prediction be available soon enough to let autonomous driving's decision making in time, without too much delay.
+
+* Input and output of prediction
+
+  - Input:
+    - map data (about location, and road layout)
+    - sensor fusion about object's location, trajectory on the map
+
+Here is a typical input data of sensor fusion:
+#+NAME:typical-input-in-json
+#+BEGIN_SRC javascript
+{
+    "timestamp" : 34512.21,
+    "vehicles" : [
+        {
+            "id"  : 0,
+            "x"   : -10.0,
+            "y"   : 8.1,
+            "v_x" : 8.0,
+            "v_y" : 0.0,
+            "sigma_x" : 0.031,
+            "sigma_y" : 0.040,
+            "sigma_v_x" : 0.12,
+            "sigma_v_y" : 0.03,
+        },
+        {
+            "id"  : 1,
+            "x"   : 10.0,
+            "y"   : 12.1,
+            "v_x" : -8.0,
+            "v_y" : 0.0,
+            "sigma_x" : 0.031,
+            "sigma_y" : 0.040,
+            "sigma_v_x" : 0.12,
+            "sigma_v_y" : 0.03,
+        },
+    ]
+}
+#+END_SRC
+
+
+- Output: prediction of moveing objects' future trajectories
+
+Here is an example of output:
+
+#+NAME:output-json
+#+BEGIN_SRC javascript
+{
+    "timestamp" : 34512.21,
+    "vehicles" : [
+        {
+            "id" : 0,
+            "length": 3.4,
+            "width" : 1.5,
+            "predictions" : [
+                {
+                    "probability" : 0.781,
+                    "trajectory"  : [
+                        {
+                            "x": -10.0,
+                            "y": 8.1,
+                            "yaw": 0.0,
+                            "timestamp": 34512.71
+                        },
+                        {
+                            "x": -6.0,
+                            "y": 8.1,
+                            "yaw": 0.0,
+                            "timestamp": 34513.21
+                        },
+                        {
+                            "x": -2.0,
+                            "y": 8.1,
+                            "yaw": 0.0,
+                            "timestamp": 34513.71
+                        },
+                        {
+                            "x": 2.0,
+                            "y": 8.1,
+                            "yaw": 0.0,
+                            "timestamp": 34514.21
+                        },
+                        {
+                            "x": 6.0,
+                            "y": 8.1,
+                            "yaw": 0.0,
+                            "timestamp": 34514.71
+                        },
+                        {
+                            "x": 10.0,
+                            "y": 8.1,
+             implomentation               "yaw": 0.0,
+                            "timestamp": 34515.21
+                        },
+                    ]
+                },
+                {
+                    "probability" : 0.219,
+                    "trajectory"  : [
+                        {
+                            "x": -10.0,
+                            "y": 8.1,
+                            "yaw": 0.0,
+                            "timestamp": 34512.71
+                        },
+                        {
+                            "x": -7.0,
+                            "y": 7.5,
+                            "yaw": -5.2,
+                            "timestamp": 34513.21
+                        },
+                        {
+                            "x": -4.0,
+                            "y": 6.1,
+                            "yaw": -32.0,
+                            "timestamp": 34513.71
+                        },
+                        {
+                            "x": -3.0,
+                            "y": 4.1,
+                            "yaw": -73.2,
+                            "timestamp": 34514.21
+                        },
+                        {
+                            "x": -2.0,
+                            "y": 1.2,
+                            "yaw": -90.0,
+                            "timestamp": 34514.71
+                        },
+                        {
+                            "x": -2.0,
+                            "y":-2.8,
+                            "yaw": -90.0,
+                            "timestamp": 34515.21
+                        },
+                    ]
+
+                }
+            ]
+        },
+        {
+            "id" : 1,
+            "length": 3.4,
+            "width" : 1.5,
+            "predictions" : [
+                {
+                    "probability" : 1.0,
+                    "trajectory" : [
+                        {
+                            "x": 10.0,
+                            "y": 12.1,
+                            "yaw": -180.0,
+                            "timestamp": 34512.71
+                        },
+                        {
+                            "x": 6.0,
+                            "y": 12.1,
+                            "yaw": -180.0,
+                            "timestamp": 34513.21
+                        },
+                        {
+                            "x": 2.0,
+                            "y": 12.1,
+                            "yaw": -180.0,
+                            "timestamp": 34513.71
+                        },
+                        {
+                            "x": -2.0,
+                            "y": 12.1,
+                            "yaw": -180.0,
+                            "timestamp": 34514.21
+                        },
+                        {
+                            "x": -6.0,
+                            "y": 12.1,
+                            "yaw": -180.0,
+                            "timestamp": 34514.71
+                        },
+                        {
+                            "x": -10.0,
+                            "y": 12.1,
+                            "yaw": -180.0,
+                            "timestamp": 34515.21
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+#+END_SRC
+
+It's in terms of objects' trajectories, with probability assigned to each possible trajectory.
+The trajectory is a time series, with points with time stamps. Each point is of state data, in terms of x, y, coordinates, and the yaw.
+
+1, The predicted trajectories shown here only extend out a few seconds. In reality the predictions we make extend to a horizon of 10-20 seconds.
+2, The trajectories shown have 0.5 second resolution. In reality we would generate slightly finer-grained predictions.
+3, This example only shows vehicles but in reality we would also generate predictions for all dynamic objects in view.
+
+* Types of predictions (how prediction is done?)
+
+- model based
+- data driven
+- hybrid
+
+** Model based
+
+   Use object's motion dynamic model often combined with stochastic variables to model uncertainty.
+   The outcome of the model is also probability belief.
+   There are various models in different level of sophistication. Often, too complex model may not
+   be worthwhile, given the inherent uncertainty, the short span of prediction,
+   and prohibitive high computing delays and cost.
+
+   1. Enumerate all possible motion trajectories. Such as,
+   - go straight without stop
+   - stop then go straight
+   - left turn
+   - right turn
+   - change lane
+   - u-turn
+   - reverse (may be illegal), etc.
+   - pedestrian go across street
+
+   2. For each one build up a (mathematical) model, establishing the state of the object sufficient to represent the motion of the object, and the
+      relationship from the state at the time t - 1, and that at the time t (prediction).
+      Use variance to model the uncertainty in the prediction.
+
+   3. Update the beliefs by comparing the observations with the output of the process models, and augment the beliefs' in terms of probability, and predicted trajectories.
+
+   4. Trajectory generation by repeating the cycle of predict with model and adjust with observations
+
+   More detailed on probability estimation: With observations (from sensor fusion), use multimodal estimation algorithm to assign probability to each possible trajectory.
+
+   1. Produce trajectories
+
+   2. Assign probability to each trajectory
+
+   More analytical: richer physical modeling, constraint, road traffic.
+   Taking advantage of understanding and insights from driver behavior, physics, vehicle dynamics, and road conditions, etc.
+   While data driven approach is naive, model based is sophisticated.
+
+**** Multimodal estimation:
+      ?
+
+** Data driven (machine learning)
+
+   - Trajectory clustering (offline training)
+
+   1. Collect a lot of objects' trajectories,
+   2. clean up the data,
+   3. define measure of similarity, which encodes the intuition/model of trajectories equivalence for functionality and purpose (such as going to the same route).
+   4. use unsupervised clustering to form prototypes of typical trajectories (the number of such prototypes should represent typical trajectories for the same purpose of travel.)
+      Note, the trajectory is of time series, that the same geometry shape, but with vast different time stamps would be considered different trajectory propagate,
+      for example, the trajectory of crossing an intersection without stop for red traffic light, and the one stops for red traffic light should be consider different.
+
+   This is called offline training.
+
+   [[https://d17h27t6h515a5.cloudfront.net/topher/2017/July/5978c2c6_trajectory-clustering/trajectory-clustering.pdf][Trajectory Clustering for Motion Prediction - Sung, Feldman, and Rus]]
+
+   - online prediction
+
+   1. Observe object's partial trajectory
+   2. Match object's partial trajectories to those trained prototypes, and compute the probabilities based the degree of match (similarity), using the same similarity measure used in the trained phase.
+
+   This is called online application (recall).
+
+   More data driven, less assumption of analytic model. Possible to represent unknown model,
+   such as trajectory patterns at the different time of the day at one intersection. Last resort in the absence of better model.
+
+
+** Hybrid
+
+   Combined the model based and data driven approach.
+
+   For example, naive Bayes classification for moving object's trajectory predictions.
+   Use model based for feature engineering.
+   Use data driven to compute for parameters required by naive Bayes rule.
+
+
+
+* Frenet coordinates (曲线坐标) of moving object's trajectory
+  The coordinate system that is suitable to describe move object's coordinates.
+  It defines object's positions in terms of the longitudinal displacement $s$ along the traveled path,
+  and lateral displacement on the traveled path $d$. It's equivalent to other coordinate system, but
+  resulting much simpler dynamic equations for usual trajectories, such as constant speed, and no lateral displacement.
+
+For example, for constant speed movement along the center of the path.
+
+\begin{eqnarray}
+s(t) = v_0 \cdot t&  & \\
+d(t) = 0
+\end{eqnarray}
+
+* Produce models: lane following model
+
+  Possibilities of motion models for a vehicle on the right most lane with another vehicle entering the right most lane from ramp.
+
+  - ignore the entering vehicle: follow the right most lane with constant velocity
+  - Speed up: follow the right most lane with positive acceleration
+  - Slow down: follow the right most lane with negative acceleration
+  - Change lane: follow the next lane with constant acceleration
+
+  Four models for lane following:
+
+** Linear point model: model the car as point particle with holonomic properties (assume the point can move in any direction at any time) with constant velocity:
+#+BEGIN_QUOTE
+Holonomic refers to the relationship between controllable and total degrees of freedom of a robot. If the controllable degree of freedom is equal to total degrees of freedom, then the robot is said to be Holonomic.
+#+END_QUOTE
+
+
+\begin{align}
+\begin{bmatrix}
+\dot s \\
+\dot d
+\end{bmatrix} &=
+\begin{bmatrix}
+\dot s_0 \\
+0
+\end{bmatrix} + W
+\end{align}
+
+This model assumes that the car move at the constant speed $\dot s$, and keeps perfectly at center of the lane.
+
+** Nonlinear point model (constant acceleration with curvature)
+
+\begin{eqnarray}
+\label{eq:1}
+c(S) &= c_0 + c_1 \cdot s  &
+\end{eqnarray}
+
+Still assume it keeps perfectly the center of the lane.
+
+in Cartisan coordinates:
+
+\begin{align}
+\begin{bmatrix}
+\dot x \\
+\dot y \\
+\dot \theta \\
+\dot \nu \\
+\dot \omega \\
+\dot a \\
+\dot c_0 \\
+\dot c_i
+\end{bmatrix} =
+\begin{bmatrix}
+(\nu + a \cdot t) \cdot cos(\theta) \\
+(\nu + a \dot t) \cdot sin(\theta) \\
+\omega \\
+a \\
+0 \\
+0 \\
+\nu \cdot c_1 \\
+0
+\end{bmatrix} + W
+\end{align}
+
+** Non-holonomic mdole, Kinematic bicycle model with controller (PID controller on distance and angle)
+
+In an inertial Cartisan coordinates:
+
+\begin{align}
+\begin{bmatrix}
+\dot x \\
+\dot y \\
+\dot \theta \\
+\dot \nu
+\end{bmatrix} =
+\begin{bmatrix}
+\nu \cdot cos(\theta) \\
+\nu \cdot sin(\theta) \\
+\frac{\nu}{L} \cdot tan(\delta) \\
+a
+\end{bmatrix} + W
+\end{align}
+
+** Dynamic bicycle model with controller (PID controller on distance and angle)
+
+\begin{align}
+\begin{bmatrix}
+\ddot s \\
+\ddot d \\
+\ddot \theta
+\end{bmatrix} =
+\begin{bmatrix}
+\dot \theta \cdot \dot d + a_s \\
+\dot \theta \cdot \dot s + \frac{2}{m}( \cdot (F_{c,f} \cdot cos(\delta) + F_{c,r}) \\
+\frac{2}{I_z} \cdot (l_f \cdot F_{c,f} - l_r \cdot F_{c,r})
+\end{bmatrix}
+\end{align}
+
+where $F_{c,f}$ is the lateral force to the front wheel, and $F_{c,r}$ is the lateral force to the rear wheel.
+
+In the above, PID model is defined as
+
+\begin{eqnarray}
+\label{eq:2}
+\delta_t = -J_P \cdot CTE - J_{D} \cdot \dot CTE - J_I \cdot \sum_{i=0}^{l}\cdot CTE_i &  & \\
+\end{eqnarray}
+
+Note, in the above model, all have the term $W$, it the random variables for uncertainty. They usually assumed to be independent Gausian (Normal) distribution with zero means, and respective deviations.
+
+** More on process models (more rigorous treatment)
+
+*** Notations
+
+**** Diagonal matrix
+
+\begin{eqnarray}
+\label{eq:3}
+F_{CV} &= diag \left[ F_2, F_{2} \right]  & \\
+F_2 & = \begin{bmatrix}
+1 & T \\
+0 & 1
+\end{bmatrix}
+\end{eqnarray}
+
+The above is equivalent to the following, where $F_2$ is block matrix along the diagonal.
+
+\begin{eqnarray}
+\label{eq:4}
+\begin{bmatrix}
+1 & T & 0 & 0 \\
+0 & 1 & 0 & 0 \\
+0 & 0 & 1 & T \\
+0 & 0 & 0 & 1
+\end{bmatrix}
+\end{eqnarray}
+
+**** State space
+
+     The process model all use Cartisan coordinates. The state space is
+
+\begin{eqnarray}
+\label{eq:5}
+X & =
+\begin{bmatrix}
+x \\
+\dot x \\
+y \\
+\dot y
+\end{bmatrix}
+\end{eqnarray}
+
+**** Variables
+
+     The equation
+
+\begin{eqnarray}
+\label{eq:6}
+x_k &= F \cdot x_{k-1} + G \cdot w_{k}  & \\
+w_k & \sim \mathcal{N}(0, Q)
+\end{eqnarray}
+
+should be read as follows:
+
+The predicted state at the time $k$ ($x_k$) is given by evolving ($F$) the previous state ($x_{k-1}$),
+incorporating ($G$) the controls ($u_{k-1}$) given at the previous time step, and
+adding normally distributed noise ($w_k).
+
+*** Process model studies
+
+Read the paper:
+[[https://d17h27t6h515a5.cloudfront.net/topher/2017/June/5953fc34_a-comparative-study-of-multiple-model-algorithms-for-maneuvering-target-tracking/a-comparative-study-of-multiple-model-algorithms-for-maneuvering-target-tracking.pdf][A comparative study of multiple-model algorithms for maneuvering target tracking]]
+
+minimum requirement: section 3.1 and 3.2
+
+Here is a record of my reading the sections of the paper. It seems really hard to understand especially without reading the previous sections.
+In the Slack channel of Self-Driving-Car ND, [[https://carnd.slack.com/messages/@ericlavigne][Eric Lavigne]] seems enjoyed reading the paper. I might ask him for some pointers to understand.
+
+* Multimodel Algorithm
+
+  Assign probabilities to multiple beliefs (models) of the objects' movement trajectories.
+
+  The approach introduced: AMM, autonomous multiple modal estimation
+
+  Variables:
+
+  $M$: the number of process models/behaviors
+
+  $\mu_1, mu_2, \dots, \mu_M$: the probabilities for the process models
+
+  Actually, at the each time stamp, for a process model $k$, the model should provide a probability density function for the each coordinate position.
+  For example, in the frenet coordinates, for each value of s, the longitudinal value, there is a probability value.
+
+  The probabilities for the process models are calculated based on
+  the comparison of difference among the probabilities computed from the density functions of the process models
+  for a coordinate position that the observation found.
+
+  For example, for observation of location $s$, the probabilities computed by the process models may be
+  $p_{1}^{s}, p_2^{s}, \dots, p_M^s$, $\mu_1, mu_2, \dots, \mu_M$ may be correlate to $p_{1}^{s}, p_2^{s}, \dots, p_M^s$
+  the model with larger $p_{k}^{s} should have higher $\mu_{k}$ value.
+
+  The following figure illustrate the relative difference of probabilities of the observation according to different process models' probability density functions.
+
+ [[./figures/multi-model-probability-from-observation-probability.png]]
+
+ The process model yielding higher probability for the observation is more likely to be the process model.
+
+ To express the above intuition,
+
+
+\begin{equation}
+\label{eq:7}
+\mu_k^{(i)} & =  \frac{\mu_{k-1}^{(i)} \cdot L_k^{(i)}}{\sum_{j=1}^{M}\mu_{k-1}^{(i)} \cdot L_k^{(i)}}
+\end{equation}
+
+* Comparison of Data Driven and Process Based Prediction
+
+  The same: prediction the future trajectory based on past
+
+  The difference: approaches
+  data driven: use graphic/geometry compassion between partial trajectory and the trajectory prototypes, use the likeness between the partial trajectory and the prototypes to determine probabilities of the trajectory prototypes as the prediction.
+  model based: use analytic model to define the probability density functions for the possible models (trajectory patterns), use the likelihood of the observation with the probability density value to determine a model's probability.
+  or analytic model to generate graphic/geometry prototypes?
+
+  Similarity: model based prediction, essentially use analytic model to define "prototypes". It might be possible to find the equivalence between the data driven prototypes and model based process model.
+  While data driven use all partial trajectory to determine prototypes' probabilities, data model only use observation at one point in time to determine the models' probability. Would it be more accurate to
+  consider all past partial observations (partial trajectory) to determine models' probabilities?
+
+* Hybrid Approaches
+
+  The key ideas is to use process model as the starting point, and use machine learning to replace the multi-mdolel estimation.
+
+** Naive Bayes based classifier
+
+   Example, male or female
+
+   Features (input, observation): [height, weight]
+
+   Compute posterio probabilities:
+   P(male | h, w) and P(female | h, w)
+
+**** The model building:
+   By Bayes rule:
+   P(male | h, w) = P(h | w, male) * P(w | male) * P(male)/P(h, w) (this is the model)
+
+   Naiveness: assume height and weight's distribution are independent.
+   Even though it may not be true, but the assumption make it tractable for problem solving, and the outcome seems reasonable.
+
+   [[./figures/naive-bayes-male-or-femaile.png]]
+
+   The denominator dose not matter for classification purpose can be ignored for compute.
+
+   P(h | w, male) can be assumed to be equal to P(h | male) as height and weight are assumed to be independent.
+
+**** Gausian Naive Bayes
+
+   Further assumptions for the ease of computation, assume P(h | male), and P(w | male) are Gausian distributions,
+   P(h | male) ~ N(mu_male_height, var_male_height)
+
+   then computing P(h | male) is reduced to compute the mean and variance of the height for males.
+   The same reasoning for P(w | male)
+
+   The same reasoning for P(h | female), and P(w | female)
+
+** Gaussian Naive Bayes Prediction Procedure
+
+   1. Select relevant features (may use human understanding of the classification algorithm, and feature machine learning, such as regression, data mining to determine)
+   2. Identify the means/variances for different classes (guess, or use data to compute, so called training)
+
+
+* Implementing Naive Bayes
+
+In this exercise you will implement a
+Gaussian Naive Bayes classifier to predict the behavior of vehicles on a highway.
+In the image below you can see the behaviors you'll be looking for on a 3 lane highway (with lanes of 4 meter width).
+The dots represent the d (y axis) and s (x axis) coordinates of vehicles as they either...
+
+1. change lanes left (shown in blue)
+2. keep lane (shown in black)
+3. or change lanes right (shown in red)
+
+Your job is to write a classifier that can predict which of these three maneuvers a vehicle is engaged in
+given a single coordinate (sampled from the trajectories shown below).
+
+Each coordinate contains 4 pieces of information:
+
+- s
+- d
+​- $\dot s$
+​- $\dot d$
+​​
+You also know the lane width is 4 meters (this might be helpful in engineering features for your algorithm).
+
+Instructions
+Implement the train(self, data, labels) and predict(self, observation) methods in the class GNB in classifier.cpp
+When you want to test your classifier, run Test Run and check out the results.
+
+NOTE: You are welcome to use some existing implementation of a Gaussian Naive Bayes classifier.
+But to get the best results you will still need to put some thought into what features you provide the algorithm when classifying.
+Though you will only be given the 4 coordinates listed above, you may find that by "engineering" features you may get better performance.
+For example: the raw value of the d coordinate may not be that useful.
+But d % lane_width might be helpful since it gives the relative position of a vehicle in it's lane regardless of which lane the vehicle is in.
+
+Here is the future engineering for the problem:
+
+- d % lane_width, relatively position in the lane, when closing to the edge of the lane, it's more likely to change lane, closer to the left edge, left turn, closer to the right edge, right lane, keep at the center, straight.
+(If considering a series of observation, it would be even more apparent. Maybe, this what Markov chain is about.)
+​- $\dot s$, when changing lane, it tends to slow down
+​- $\dot d$, when changing lane, it speed of d would be larger.
+
+Again, considering a chain (series of points, it would be even more apparent.)
+
+Next, compute mean of the engineered features for each class, also the variance of the features for each class.
+The variance is the mean of $(x -\mu)^2$
+
+Structure of the program
+
+- input
+- prepossessing to implement feature engineering
+- organize by classes
+- compute the mean
+- compute the variance
+- construct the recall/application Bayes rule
+- select the class with the maximum aproria probability
+
+Implementation,
+
+- understand the structure of the input data
+
+Here is the structure of the data, there are files of labels and observations.
+In the files each line is a data point, of s, d, $\dot s$, $\dot d$, and label of {left, right, keep}
+
+So the implementation of input should be read in the labels into a array
+and read in the data points into an array of arrays,
+
+#+NAME:read-in-data
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+  with open('./PredictionExercise/nd013_pred_data/train_labels.txt') as f:
+      labels_train = [(line.strip()) for line in f]
+
+  with open('./PredictionExercise/nd013_pred_data/train_states.txt') as f:
+      states_train = [([float(x) for x in line.strip().split(',')]) for line in f]
+
+  with open('./PredictionExercise/nd013_pred_data/test_labels.txt') as f:
+      labels_train = [(line.strip()) for line in f]
+
+  with open('./PredictionExercise/nd013_pred_data/test_states.txt') as f:
+      states_train = [([float(x) for x in line.strip().split(',')]) for line in f]
+
+#+END_SRC
+
+Next, sort the states by the labels for the train data.
+
+#+NAME:sort-states-by-lables
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+  states_map = {}
+  lane_width = 4
+  for label_index in range(len(labels_train)):
+      states = states_train[label_index]
+      states_map[label_train[label_index]] = [states[1] % lane_width, states[2], states[3]]
+
+  # use group by label values, then compute the mean value for each label value
+#+END_SRC
+
+#+NAME:implementation-by-pandas
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+  import pandas as pd
+  import numpy as np
+  train_labels = pd.read_csv('./PredictionExercise/nd013_pred_data/train_labels.txt',
+                             header=None, names=['maneuver'])
+  train_states = pd.read_csv('./PredictionExercise/nd013_pred_data/train_states.txt',
+                             header=None, names=['s', 'd', 'dot_s', 'dot_d'])
+  lane_width = 4
+  labels_states = pd.concat([train_labels, (train_states['d'] % lane_width), train_states['dot_s'], train_states['dot_d']], axis=1)
+  grouped = labels_states.groupby('maneuver')
+
+  test_labels = pd.read_csv('./PredictionExercise/nd013_pred_data/test_labels.txt',
+                             header=None, names=['maneuver'])
+  test_states = pd.read_csv('./PredictionExercise/nd013_pred_data/test_states.txt',
+                             header=None, names=['s', 'd', 'dot_s', 'dot_d'])
+  test_states_processed = pd.concat([(test_states['d'] % lane_width), test_states['dot_s'], test_states['dot_d']], axis=1)
+
+  # Training: compute the paramters
+
+  total_classes = len(train_labels['maneuver'])
+  class_prob = np.asarray([len([label for label in train_labels['maneuver'] if label == cls])/total_classes for cls in ['keep', 'left', 'right']])
+
+  mean_std = (grouped.agg([np.mean, lambda x: np.std(x, ddof=0)])
+              .rename(columns={'mean': 'mean', '<lambda>': 'std'}))
+
+  import scipy.stats as stats
+
+  classes = ['keep', 'left', 'right']
+  by_d = stats.norm(mean_std['d']['mean'], mean_std['d']['std'])
+  by_dot_s = stats.norm(mean_std['dot_s']['mean'], mean_std['dot_s']['std'])
+  by_dot_d = stats.norm(mean_std['dot_d']['mean'], mean_std['dot_d']['std'])
+
+  # Implement recall, classification:
+  def classifier(d, dot_s, dot_d):
+      prob = by_d.pdf(d)*by_dot_s.pdf(dot_s)*by_dot_d.pdf(dot_d)*class_prob
+      return classes[np.argmax(prob)]
+
+  def classify_df(df):
+      classified = []
+      for index, row in df.iterrows():
+          classified.append(classifier(row['d'], row['dot_s'], row['dot_d']))
+      return classified
+  def accuracy(classifications, labels):
+      return sum(classifications == labels['maneuver'])/len(classifications)
+  train_classifications = classify_df(train_states)
+  train_accuracy = accuracy(train_classifications, train_labels)
+  test_classifications = classify_df(test_states)
+  test_accuracy = accuracy(test_classifications, test_labels)
+  print('train correction rate:', train_accuracy, 'test correction rate:', test_accuracy)
+#+END_SRC
+
+** Understanding of the reference solution
+
+   I need to clarify my doubt on the why it does not have the multiplication factor of the class probability.
+   I tried to add the factor of class probability in the product for likelihood given a class with a feature value.
+   It did not make the prediction more accurate, but also no worse.
+
+#+NAME:preamble
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+  import numpy as np
+  import random
+  from math import sqrt, pi, exp
+
+  def gaussian_prob(obs, mu, sig):
+      num = (obs - mu)**2
+      denum = 2*sig**2
+      norm = 1 / sqrt(2*pi*sig**2)
+      return norm * exp(-num/denum)
+#+END_SRC
+
+Note for the following code segments as they are part of class block, there should be prior indent at the beginning of each segement.
+
+Defines the class names for the classification:
+#+NAME:init
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+    def __init__(self):
+        self.classes = ['left', 'keep', 'right']
+#+END_SRC
+
+Just a place holder for potential further feature engineering.
+I tried to engineer the feature of d, to module by the lane width. But it actually hurted the accuracy performance by about 1%.
+(83.6 percent correct vs. 84.39999999999999 percent correct)
+
+#+NAME:prepossessing
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+    def process_vars(self,vars):
+        # could do something fancy in here, but right now
+        # s, d, s_dot and d_dot alone give good results
+        s, d, s_dot, d_dot = vars
+        #lane_width = 4
+        #return s, d % lane_width, s_dot, d_dot
+        return s, d, s_dot, d_dot
+#+END_SRC
+
+Start for the code segments of function train, with prior indentation fixed:
+
+The input of observations and the corresponding training labels:
+#+NAME:train-doc
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+        """
+        X is an array of training data, each entry of which is a
+        length 4 array which represents a snapshot of a vehicle's
+        s, d, s_dot, and d_dot coordinates.
+
+        Y is an array of labels, each of which is either 'left', 'keep',
+        or 'right'. These labels indicate what maneuver the vehicle was
+        engaged in during the corresponding training data snapshot.
+        """
+
+#+END_SRC
+
+*** observations-transposed-splitted-by-labels
+The input observations are organized in terms of snapshot of multiple sensors signals,
+that is array of observation snapshots (an array of the observation of various sensor types)
+But for computation, we need to organize the observations in terms of label value, and have all the value of a particular sensor type into one array.
+That is, a map from labels to
+an array of
+4 arrays of observations of the same sensor type.
+
+The following comment illustrates the data structure.
+
+Note: the pattern of constructing the hierarchy data structure.
+
+1. construct, map from label to an array.
+2. For each label, construct the (empty) (4) sub-arrays for each type of sensor type in the top level array.
+
+Then fill data to the setup data structure.
+
+Note, use zip to parallelly pair arrays of raw observations and their corresponding labels.
+This save the trouble of putting the raw observations and labels into one data structure
+for iterating through the observations and the paired labels
+
+Also, the hook for prepossessing is in place for each observation.
+
+Note, use enumerate to iterate with both index and content at the same time.
+
+Each individual observation value is place into proper place, by the corresponding label,
+by the type of sensor type, and the order of the observations (append by the order from the input array, X)
+
+#+NAME:observations-transposed-splitted-by-labels
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+
+  self.total_train_samples = len(Y)  # needed to compute the probability for each class
+
+  # initialize an empty array of arrays. For this problem
+  # we are looking at three labels and keeping track of 4
+  # variables for each (s,d,s_dot,d_dot), so the empty array
+  # totals_by_label will look like this:
+
+  # {
+  #   "left" :[ [],[],[],[] ],
+  #   "keep" :[ [],[],[],[] ],
+  #   "right":[ [],[],[],[] ]
+  # }
+
+  totals_by_label = {
+      "left" : [],
+      "keep" : [],
+      "right": [],
+  }
+  for label in self.classes:
+      for i in range(num_vars):
+          totals_by_label[label].append([])
+
+  for x, label in zip(X,Y):
+
+      # process the raw s,d,s_dot,d_dot snapshot if desired.
+      x = self.process_vars(x)
+
+      # add this data into the appropriate place in the
+      # totals_by_label data structure.
+      for i,val in enumerate(x):
+          totals_by_label[label][i].append(val)
+#+END_SRC
+
+*** means-stds-for-each-label-sensor-type-combination
+The means and standard deviations for each label and feature type is organized,
+respectively for means and standard deviations,
+into
+an array of
+sub-arrays (across label values, one for each label value)
+of means/stds (across feature types, one mean/std for one feature type)
+
+A sub-array is created for label i
+then the sub-array is filled with the means/stds for the feature arrays.
+
+totals_by_label[i] is the array for the label i
+
+arr in for arr in totals_by_label[i]:
+is one of the array for a particular feature
+
+Note the clever appending to the last sub-array, just created for the label i:
+means[-1].append(mean)
+
+#+NAME:means-stds-for-each-label-sensor-type-combination
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+  # Get the mean and standard deviation for each of the arrays
+  # we've built up. These will be used as our priors in GNB
+  means = []
+  stds = []
+  class_prob = {}                 # the probability of classes
+  for i in self.classes:
+      means.append([])
+      stds.append([])
+      class_prob[i] = len(totals_by_label[i][0])/float(self.total_train_samples)
+      for arr in totals_by_label[i]:
+          mean = np.mean(arr)
+          std = np.std(arr)
+          means[-1].append(mean)
+          stds[-1].append(std)
+
+  self._means = means
+  self._stds = stds
+  self._class_prob = class_prob
+#+END_SRC
+
+*** compute-probabilities-for-all-possible-classes
+probs = [] initialized, will hold the probabilities for all possible classe labels
+
+For each class, the probability is the products of the likelihoods.
+Each likelihood is Gaussian probability given a class, for a feature type with the observation value for the feature.
+
+Finally, the probabilities for all possible classes are normalized, so that sum of all probabilities is one.
+In my opinion, it's not needed to have the same effect, as we just want to do argmax to find the class having the highest probability.
+
+I have proved that without normalization, the outcome would be the same.
+
+Furthermore, it seems to me that the probability for each class should have the probability of the class itself.
+I did experiment to add the class probability in the product, but it does not make any difference.
+
+Next experiment that I'd like to do is to not consider the likelihood for the feature s.
+I might need to use enumerate(zip(means, stds, obs)), in order to ignore the feature s,
+which is the first array in the feature arrays.
+
+#+NAME:compute-probabilities-for-all-possible-classes
+#+BEGIN_SRC python :noweb yes :tangle :exports none
+  probs = []
+  obs = self.process_vars(obs)
+  for (means, stds, lab) in zip(self._means, self._stds, self.classes):
+      #product = 1
+      product = self._class_prob[lab]
+      for mu, sig, o in zip(means, stds, obs):
+          likelihood = gaussian_prob(o, mu, sig)
+          product *= likelihood
+      probs.append(product)
+  #t = sum(probs)
+  #return [p/t for p in probs]
+  return probs
+#+END_SRC
+
+*** perform-argmax
+
+ #+NAME:perform-argmax
+ #+BEGIN_SRC python :noweb yes :tangle :exports none
+         idx = 0
+         best_p = 0
+         for i, p in enumerate(probs):
+             if p > best_p:
+                 best_p = p
+                 idx = i
+         names = ['left','keep','right']
+         return names[idx]
+ #+END_SRC
+
+*** udacity-reference-solution
+ #+NAME:udacity-reference-solution
+ #+BEGIN_SRC python :noweb yes :tangle ./PredictionExercise/classifier.py :exports none
+   <<preamble>>
+
+   class GNB():
+     <<init>>
+     <<prepossessing>>
+     def train(self, X, Y):
+         <<train-doc>>
+         num_vars = 4
+         <<observations-transposed-splitted-by-labels>>
+         <<means-stds-for-each-label-sensor-type-combination>>
+
+     def _predict(self, obs):
+         """
+         Private method used to assign a probability to each class.
+         """
+         <<compute-probabilities-for-all-possible-classes>>
+     def predict(self, observation):
+         probs = self._predict(observation)
+         <<perform-argmax>>
+ #+END_SRC
+
+ Lesson learned: Programming doesn't necessarily need to be sophisticated.
+ It's better to be simple and naive, unless there is tremendous harm in doing that.
+
+** C++ implementation
+#+NAME:classifier-h
+#+BEGIN_SRC C++  :tangle ~/programming/cplusplus/sandbox/src/classifier.h :exports none
+  #ifndef CLASSIFIER_H
+  #define CLASSIFIER_H
+  #include <iostream>
+  #include <sstream>
+  #include <fstream>
+  #include <math.h>
+  #include <vector>
+  #include <map>
+
+  //using namespace std;
+
+  class GNB {
+  public:
+
+    std::vector<std::string> possible_labels = {"left","keep","right"};
+    int total_train_samples;
+    std::map<std::string, std::vector<double>> means;
+    std::map<std::string, std::vector<double>> stds;
+    std::map<std::string, double> class_prob;
+
+    /**
+     ,* Constructor
+     ,*/
+    GNB();
+
+    /**
+     ,* Destructor
+     ,*/
+    virtual ~GNB();
+
+    void train(std::vector<std::vector<double> > data, std::vector<std::string>  labels);
+
+    std::string predict(std::vector<double>);
+
+  };
+
+  #endif
+#+END_SRC
+
+#+NAME:classifier-Cpp
+#+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/classifier.cpp :exports none
+  #include <iostream>
+  #include <sstream>
+  #include <fstream>
+  #include <math.h>
+  #include <vector>
+  #include <map>
+  #include "classifier.h"
+
+  using namespace std;
+
+  double gaussian_prob(double obs, double mu, double sig) {
+    double num = pow(obs - mu, 2);
+    double denum = 2*pow(sig, 2);
+    // norm = 1/sqrt(2*pi*pow(sig, 2));
+    // omit the constant operation
+    double norm = 1/sig;
+    return norm*exp(-num/denum);
+  }
+
+  int argmax(vector<double> probs) {
+    int idx = 0;
+    double largest_p = 0;
+    for (auto i = 0; i < probs.size(); ++i) {
+      if (largest_p < probs[i]) {
+        largest_p = probs[i];
+        idx = i;
+      }
+    }
+    return idx;
+  }
+
+  /**
+   ,* Initializes GNB
+   ,*/
+  GNB::GNB() {
+  }
+
+  GNB::~GNB() {}
+
+  void GNB::train(vector<vector<double>> data, vector<string> labels)
+  {
+
+    /*
+      Trains the classifier with N data points and labels.
+
+      INPUTS
+      data - array of N observations
+        - Each observation is a tuple with 4 values: s, d,
+          s_dot and d_dot.
+        - Example : [
+            [3.5, 0.1, 5.9, -0.02],
+            [8.0, -0.3, 3.0, 2.2],
+            ...
+          ]
+
+      labels - array of N labels
+        - Each label is one of "left", "keep", or "right".
+    ,*/
+    int num_vars = 4;
+    this->total_train_samples = labels.size();
+
+    map<string, vector<vector<double > > > totals_by_label;
+    for (auto label:this->possible_labels) {
+      vector<vector<double>> v_v_double;
+      totals_by_label[label] = v_v_double;
+    }
+    for (auto label:this->possible_labels) {
+      for (auto j = 0; j < num_vars; ++j) {
+        vector<double> v_double;
+        totals_by_label[label].push_back(v_double);
+      }
+    }
+    for (auto i = 0; i < labels.size(); ++i) {
+      string label = labels[i];
+      for (auto j = 0; j < num_vars; ++j) {
+          double feature = data[i][j];
+          if (j == 1) {
+              feature = fmod(feature, 4.0);
+          }
+        totals_by_label[label][j].push_back(feature);
+      }
+    }
+    for (auto label:this->possible_labels) {
+      vector<double> means;
+      vector<double> stds;
+      this->class_prob[label] = (float)totals_by_label[label][0].size()/(float)this->total_train_samples;
+      for (auto feature_vector:totals_by_label[label]) {
+        double sum = 0;
+        for (auto feature:feature_vector) {
+          sum += feature;
+        }
+        double mean = sum/(float)this->total_train_samples;
+        means.push_back(mean);
+
+        sum = 0;
+        for (auto feature:feature_vector) {
+          double diff = feature - mean;
+          sum += pow(diff, 2);
+        }
+        double std = sqrt(sum/(float)this->total_train_samples);
+        stds.push_back(std);
+      }
+      this->means[label] = means;
+      this->stds[label] = stds;
+    }
+  }
+
+  string GNB::predict(vector<double> sample)
+  {
+    /*
+      Once trained, this method is called and expected to return
+      a predicted behavior for the given observation.
+
+      INPUTS
+
+      observation - a 4 tuple with s, d, s_dot, d_dot.
+        - Example: [3.5, 0.1, 8.5, -0.2]
+
+      OUTPUT
+
+      A label representing the best guess of the classifier. Can
+      be one of "left", "keep" or "right".
+      """
+      # TODO - complete this
+    ,*/
+    vector<double> probs;
+    for (auto label:this->possible_labels) {
+      double product = this->class_prob[label];
+      for (auto i = 0; i < sample.size(); ++i) {
+        double mu = means[label][i];
+        double sig = stds[label][i];
+        double feature = sample[i];
+        if (i == 1) feature = fmod(sample[i], 4.0);
+        double likelihood = gaussian_prob(feature, mu, sig);
+        product *= likelihood;
+      }
+      probs.push_back(product);
+    }
+
+    int idx = argmax(probs);
+
+    return this->possible_labels[idx];
+
+  }
+#+END_SRC
+
+#+NAME:main-cpp
+#+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/sandbox.cpp :exports none
+#include "classifier.h"
+#include <iostream>
+#include <fstream>
+#include <math.h>
+#include <vector>
+
+using namespace std;
+
+vector<vector<double> > Load_State(string file_name)
+{
+    ifstream in_state_(file_name.c_str(), ifstream::in);
+    vector< vector<double >> state_out;
+    string line;
+
+
+    while (getline(in_state_, line))
+    {
+        istringstream iss(line);
+    	vector<double> x_coord;
+
+    	string token;
+    	while( getline(iss,token,','))
+    	{
+    	    x_coord.push_back(stod(token));
+    	}
+    	state_out.push_back(x_coord);
+    }
+    return state_out;
+}
+vector<string> Load_Label(string file_name)
+{
+    ifstream in_label_(file_name.c_str(), ifstream::in);
+    vector< string > label_out;
+    string line;
+    while (getline(in_label_, line))
+    {
+    	istringstream iss(line);
+    	string label;
+	    iss >> label;
+
+	    label_out.push_back(label);
+    }
+    return label_out;
+
+}
+
+int main() {
+
+    vector< vector<double> > X_train = Load_State("./train_states.txt");
+    vector< vector<double> > X_test  = Load_State("./test_states.txt");
+    vector< string > Y_train  = Load_Label("./train_labels.txt");
+    vector< string > Y_test   = Load_Label("./test_labels.txt");
+
+	cout << "X_train number of elements " << X_train.size() << endl;
+	cout << "X_train element size " << X_train[0].size() << endl;
+	cout << "Y_train number of elements " << Y_train.size() << endl;
+
+	GNB gnb = GNB();
+
+	gnb.train(X_train, Y_train);
+
+	cout << "X_test number of elements " << X_test.size() << endl;
+	cout << "X_test element size " << X_test[0].size() << endl;
+	cout << "Y_test number of elements " << Y_test.size() << endl;
+
+	int score = 0;
+	for(int i = 0; i < X_test.size(); i++)
+	{
+		vector<double> coords = X_test[i];
+		string predicted = gnb.predict(coords);
+		if(predicted.compare(Y_test[i]) == 0)
+		{
+			score += 1;
+		}
+	}
+
+	float fraction_correct = float(score) / Y_test.size();
+	cout << "You got " << (100*fraction_correct) << " correct" << endl;
+
+	return 0;
+}
+#+END_SRC
+
+Note, in the above implementation, with C++ implementation, I found that adding the modulas by 4 for d, actually
+helps to improve the correction rate by about 1%.
+
+** My failed attempt for a reference solution
+
+   Below is my attempt to implement a reference solution, but it doesn't work.
+
+ #+NAME:reference solution
+ #+BEGIN_SRC python :noweb yes :tangle ./PredictionExercise/classifier.py :exports none
+   import numpy as np
+   from functools import reduce
+
+   class GNB(object):
+
+     def __init__(self):
+       self.possible_labels = ['left', 'keep', 'right']
+       self.feature_names = ['d', 'dot_s', 'dot_d']
+       self.label_feature_stats = {}
+       for label in self.possible_labels:
+         self.label_feature_stats[label] = {}
+         for feature_name in self.feature_names:
+           self.label_feature_stats[label][feature_name] = {} # map for mean, std
+       self.label_prob = {}
+       for label in self.possible_labels:
+         self.label_prob[label] = 0
+
+     def pre_process(self, input):
+       s, d, dot_s, dot_d = input
+       return [d % 4, dot_s, dot_d]
+
+     def train(self, data, labels):
+       """
+       Trains the classifier with N data points and labels.
+
+       INPUTS
+       data - array of N observations
+         - Each observation is a tuple with 4 values: s, d,
+           s_dot and d_dot.
+         - Example : [
+             [3.5, 0.1, 5.9, -0.02],
+             [8.0, -0.3, 3.0, 2.2],
+             ...
+           ]
+
+       labels - array of N labels
+         - Each label is one of "left", "keep", or "right".
+       """
+       data_splitted = {}
+       for label in self.possible_labels:
+         data_splitted[label] = {}
+         for feature_name in self.feature_names:
+           data_splitted[label][feature_name] = []
+       # end of for lable in self.possible_lables
+
+       for i in range(len(labels)):
+         features = self.pre_process(data[i])
+         self.label_prob[labels[i]] += 1
+         for j in range(len(self.feature_names)):
+           data_splitted[labels[i]][self.feature_names[j]].append(features[j])
+       # end of for i in range(len(labels))
+
+       for label in self.possible_labels:
+         self.label_prob[label] /= float(len(labels))
+         for featue_name in self.feature_names:
+           l = data_splitted[label][featue_name]
+           l_mean = sum(l)/float(len(l))
+           l_var = sum(map(lambda x: (x - l_mean)**2, l))/float(len(l))
+           self.label_feature_stats[label][feature_name]['mean'] =  l_mean
+           self.label_feature_stats[label][feature_name]['var'] = l_var
+           print('label: ', label, ' feature_name: ', featue_name, self.label_feature_stats[label][featue_name])
+       # end of for label in self.possible_labels
+       #print(self.label_feature_stats)
+
+     def predict(self, observation):
+       """
+       Once trained, this method is called and expected to return
+       a predicted behavior for the given observation.
+
+       INPUTS
+
+       observation - a 4 tuple with s, d, s_dot, d_dot.
+         - Example: [3.5, 0.1, 8.5, -0.2]
+
+       OUTPUT
+
+       A label representing the best guess of the classifier. Can
+       be one of "left", "keep" or "right".
+       """
+
+       def f(feature_name, feature, label):
+         # print(self.label_feature_stats)
+         var = self.label_feature_stats[label][feature_name]['var']
+         return exp(-(feature - self.label_feature_stats[label][feature_name]['mean'])**2/(2*var))/sqrt(var)
+
+       def likely(features, label):
+         result = 1
+         for i in range(len(features)):
+           result *= f(self.feature_names[i], features[i], label)
+           return result*self.label_prob[label]
+
+       likelyhood = [likely(self.pre_process(observation), label) for label in self.possible_labels]
+
+       return self.possible_labels[np.argmax(likelyhood)]
+ #+END_SRC
