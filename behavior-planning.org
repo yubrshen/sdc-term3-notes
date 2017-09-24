@@ -29,7 +29,6 @@ Path planning consists of:
    - target leading vehicle
    - target speed
    - seconds to reach target (time)
-   -
 
 ** The problem of behavior planning
 
@@ -325,13 +324,14 @@ Path planning consists of:
        - s, the s coordinate
        - v, velocity
        - a, acceleration
-       - state, default "CS" (constant speed) (The possible states: "KL": keep lane; "LCL" or "LCL": lane change left/right; "PLCL" or "PLCR": prepare lane change left/right.
+       - state, default "CS" (constant speed, for the other vehicles assuming they are of constant speed.)
+         (The possible states: "KL": keep lane; "LCL" or "LCL": lane change left/right; "PLCL" or "PLCR": prepare lane change left/right.
        - target_speed: the speed limit for the vehicle
 
        Vehicle has the behaviors:
        - generate_predictions(): drive the simulation of the vehicle's state at each time step in the range of time steps (horizon). It calls Vehicle.state_at(time_step_index).
          update the predictions for the vehicle at all time steps in horizon.
-         The returned predictions is a map from vehicle id to list of {'s': s, 'lane': lane}.
+         The returned predictions is a map from vehicle id to list of map: {'s': s, 'lane': lane}.
          The first entry is the position of the vehicle when the prediction starts.
          DEPENDENCY: Vehicle.state_at(time_index)
        - update_state(predictions): given the predictions and the current state, exercise the state machine to determine the next state, and update the state.
@@ -346,6 +346,86 @@ Path planning consists of:
          - realize_lane_change: update the new lane, and adjust the maximum acceleration for the lane changed into.
          - realize_prep_lane_change: based on the vehicle that would be behind the vehicle ego if the vehicle ego would change the lane into, adjust the acceleration to avoid collision.
            (Not fully understood, may need to read further.)
+******* Design of update_state
+
+        There is little state machine logic, as from each state, it's possible to transition to every other state, including the current state.
+        So the design is to consider all the possible states from the current state, which all the states. Then filtered out the impossible ones according to the current lane.
+        When the current lane is 0, the lowest, there is no way to reduce the lane number.
+        When the current lane is the maximum, there is no way to increase the lane number.
+
+        (Convention: assuming:
+        - right turn reduces lane number;
+        - left turn increases lane number;
+
+          This is equivalent to the situation, from the perspective of a driver behind the wheel, the lanes are numbered from right to left (North America).
+          )
+
+
+        Then for each state, considering the total cost from various considerations:
+        - Safety
+          - collision_cost
+          - buffer_cost
+        - Comfort
+          - change_lane_cost (the discomfort of changing lane)
+        - Efficiency: (how fast can the vehicle can reach the goal)
+          - distance_from_goal_line (overhead of changing lane)
+          - inefficiency_cost
+
+        Then choose the next state that has the lowest cost.
+******** Combination of the costs
+
+         Add the costs with weights according to the factors importance to the overall cost (selection decision).
+******** Design of individual cost
+
+         For each factor and each proposed state, hypothetically assume the state of the vehicle is in the proposed state, lane, and position,
+         then compute the cost in the situation.
+ 
+********* Data collection for cost computation
+          For all the cost calculation, there should be predictions of the positions of the other vehicles and
+          Ego under the new proposed state in the time step within the horizon.
+          The predictions of the other vehicle is obtained in the simulation of the vehicle.advance().
+          The hypothetically updated trajectory is calculated based the new proposed state by function vehicle._trajectory_for_state(self, proposed_state, predictions, horizon).
+          All the required data is calculated together in get_helper_data.
+
+          Here are the data used in the cost calculations:
+              - 'proposed_lane': the (changed) lane with the proposed state
+              - 'avg_speed': the average speed with the proposed state and the (changed) lane, the faster the better
+              - 'max_acceleration': the acceleration with the maximum of the absolute value, not sure the use of it? Currently, it's not being used.
+              - 'rms_acceleration': the average acceleration squared, not sure the use of it? It's not being used.
+              - 'closest_approach': the closest distance between Ego and the other vehicles in the same lane, the larger the better, the smaller, the riskier.
+              - 'end_distance_to_goal': the distance remaining to the goal, the shorter the better. When it's large, the number of lanes away from the goal lane does not matter.
+              - 'end_lanes_from_goal': the number of lanes away from the goal lane, the smaller the better, when the distance to goal line is small.
+              - 'collides': record the time step when the first collision happened.
+
+********* Safety
+
+          In the proposed state, evaluate how likely a collision would happen.
+          It's accomplished by examining if there is any vehicle shared the same position (the same coordinates, s, and lane).
+          This can be computed by predicting the vehicles in the lane in the sufficient time horizon time step. And exam for each time step.
+          There it's necessary to have the position data for Ego, and the other vehicles in the same lane.
+          This is accomplished in simulation by running the predictions for the horizon for the vehicles in the lane.
+
+          Collision is detected by comparing the s values in the lane with the other vehicles' and Ego's for each time step within the time horizon.
+          If there is position duplication (or close to), there is collision.
+
+          Only the buffer in front of Ego is considered.
+          It's considered in terms of time to reach the nearest car's position in front of Ego in the same line (data.closest_approach).
+          It's there is sufficient time gap, there is no danger, otherwise the danger is inversely related to the value of the time gap.
+
+          It seems to me that we might combine the collision cost and buffer cost together, as they all relate to collision.
+          No, but they have different degree of significance. Collision is absolute failure. But lack of buffer is just risk.
+
+********* Comfort
+          It's not really considered. It's been used as the same as efficiency.
+
+
+********* Efficiency
+          - distance_from_goal_line: reflect how much cost incurred when change lane. It's proportional to the number of lanes away from the goal lane,
+            and inversely proportional the time to the goal. Only when the time to the goal is very close, then changing lane would be severely discouraged.
+            I had to increase the magnitude of Efficiency factor to amplify the cost of changing lane to avoid the problem that Ego may be in different lane passing the goal position.
+
+          - inefficiency_cost: reflects if Ego can take advantage of a lane where it can reach Ego's own speed limit as much as possible, if that lane has less car, and allow for higher speed.
+
 
 ***** The top level functions
       #+NAME:simulate_behavior.py
@@ -549,7 +629,7 @@ Path planning consists of:
         Snapshot = namedtuple("Snapshot", ['lane', 's', 'v', 'a', 'state'])
 
         class Vehicle(object):
-          L = 1
+          L = 1                         # the gap between two vehicle, smaller than L consider colliding.
           preferred_buffer = 6 # impacts "keep lane" behavior.
 
           def __init__(self, lane, s, v, a):
@@ -560,7 +640,6 @@ Path planning consists of:
             self.state = "CS"
             self.max_acceleration = None
 
-          # TODO - Implement this method.
           def update_state(self, predictions):
             """
             Updates the "state" of the vehicle by assigning one of the
@@ -599,13 +678,6 @@ Path planning consists of:
             # pdb.set_trace()
             self.state = state
 
-          def lane_delta(self, direction):
-            """
-            Right turn lane number -1;
-            Left turn lane number +1
-            """
-            return -1 if direction == 'R' else 1
-
           def _get_next_state(self, predictions):
             states = ["KL", "LCL", "LCR", "PLCL", "PLCR"]
             if self.lane == 0:          # no more lane reduction, right turn
@@ -616,43 +688,52 @@ Path planning consists of:
               states.remove("PLCL")
 
             costs = []
-            for state in states:
+            for proposed_state in states:
               predictions_copy = deepcopy(predictions)
-              trajectory = self._trajectory_for_state(state, predictions_copy)
+              trajectory = self._trajectory_for_state(proposed_state, predictions_copy)
               cost = calculate_cost(self, trajectory, predictions)
-              costs.append({"state": state, "cost": cost})
+              costs.append({"state": proposed_state, "cost": cost})
 
             best = min(costs, key=lambda c: c['cost'])
             return best['state']
 
-          def _trajectory_for_state(self, state, predictions, horizon=5):
+
+          def lane_delta(self, direction):
+            """
+            Right turn lane number -1;
+            Left turn lane number +1
+            """
+            return -1 if direction == 'R' else 1
+
+          def _trajectory_for_state(self, proposed_state, predictions, horizon=5):
+            """
+            Based on predictions and the proposed state, produces hypothetically trajectory,
+            if the state were changed to the proposed state.
+            """
             snapshot = self.snapshot()  # keep a copy of the original vehicle's all data including state
 
             # imagine to be in the new proposed state
-            self.state = state
+            self.state = proposed_state
             trajectory = [snapshot]
             # pdb.set_trace()
             for i in range(horizon):
               self.restore_state_from_snapshot(snapshot)
-              self.state = state
-              assert 0 <= self.lane < self.lanes_available, "Wrong lane value before realize_state in _trajectory_for_state: {}".format(self.lane)
-              self.realize_state(predictions)  # It seems to me that the realize_state may need to into consideration of the horizon time step
+              self.state = proposed_state
+              self.realize_state(predictions)  # essentially calculate the new lane and the new acceleration
+              # in the context of the proposed state, and the predictions, especially the top element in the predictions.
               assert 0 <= self.lane < self.lanes_available, "Wrong lane value after realize_state in _trajectory_for_state: {}. The proposed state: {}.".format(
                 self.lane, self.state)
-              self.increment(dt=i)          # also should this be taken into consideration of horizon time step
+              self.increment()
               trajectory.append(self.snapshot())
 
-              # need to remove the first position in the list of predicted positions for each vehicle, why?
-              # pdb.set_trace()           # check out the structure of predictions, and the meaning of v.pop()
-              # The follow code may be remove, if there is no prediction at the time zero when doing generate_predictions
               for vehicle_id, position_list in predictions.items():
-                position_list.pop()     # as the first one is the position before prediction start.
+                position_list.pop()     # remove the used predictions
             # restore state from snapshot
             self.restore_state_from_snapshot(snapshot)
-            return trajectory           # predictions changed as side effect
+            return trajectory           # predictions changed as side effect, but the input is just a copy, no harm done
 
           def snapshot(self):
-            return Snapshot(self.lane, self.s, self.v, self.a, self.lane)
+            return Snapshot(self.lane, self.s, self.v, self.a, self.state)
 
           def restore_state_from_snapshot(self, snapshot):
             self.lane = snapshot.lane
@@ -679,8 +760,13 @@ Path planning consists of:
             return s
 
           def increment(self, dt=1):
-            self.s += self.v * dt
-            self.v += self.a * dt
+            """
+            update self.s, and self.v in dt time.
+            """
+            self.s = self.s + self.v * dt + self.a * dt * dt /2
+            # here the effect of acceleration is can be ignored, if dt is 1,
+            # for one dt, the speed is assumed to be constant.
+            self.v = self.v + self.a * dt
 
           def state_at(self, t):
             """
@@ -694,7 +780,7 @@ Path planning consists of:
             """
             Simple collision detection.
             """
-            l,   s,   v,   a = self.state_at(at_time)
+            l,   s,   v,   a   = self.state_at(at_time)
             l_o, s_o, v_o, a_o = other.state_at(at_time)
             return l == l_o and abs(s-s_o) <= L
 
@@ -721,6 +807,9 @@ Path planning consists of:
             self.a = 0
 
           def _max_accel_for_lane(self, predictions, lane, s):
+            """
+            calculate the maximum acceleration permitted given the traffic and the lane.
+            """
             delta_v_til_target = self.target_speed - self.v
             max_acc = min(self.max_acceleration, delta_v_til_target)
             in_front = [v for (v_id, v) in predictions.items() if v[0]['lane'] == lane and v[0]['s'] > s ]
@@ -740,39 +829,38 @@ Path planning consists of:
             self.lane += self.lane_delta(direction)
             assert 0 <= self.lane < self.lanes_available, "Wrong lane value in realize_lane_changetra: {}. The proposed state: {}.".format(
                 self.lane, self.state)
-
             self.a = self._max_accel_for_lane(predictions, self.lane, self.s)
 
           def realize_prep_lane_change(self, predictions, direction):
             lane = self.lane + self.lane_delta(direction)
-            ids_and_vehicles = [(v_id, v) for (v_id, v) in predictions.items() if v[0]['lane'] == lane and v[0]['s'] <= self.s]
-            if len(ids_and_vehicles) > 0:
-              vehicles = [v[1] for v in ids_and_vehicles]
+            vehicles_behind_same_lane = [vehicle_trajectory for (v_id, vehicle_trajectory) in predictions.items()
+                                         if vehicle_trajectory[0]['lane'] == lane and vehicle_trajectory[0]['s'] <= self.s]
+            vehicles_front_same_lane = [vehicle_trajectory for (v_id, vehicle_trajectory) in predictions.items()
+                                         if vehicle_trajectory[0]['lane'] == lane and self.s <= vehicle_trajectory[0]['s']]
+            a_avoiding_smash_behind, delta_s_behind = self.compatible_acceleration(vehicles_front_same_lane, "BEHIND") or (self.a, 0)
+            a_avoiding_smash_front, delta_s_front = self.compatible_acceleration(vehicles_front_same_lane, "FRONT") or (self.a, 0)
 
-              nearest_behind = max(ids_and_vehicles, key=lambda v: v[1][0]['s'])
+            if delta_s_behind < delta_s_front:  # only deal with the most urgent risk
+              self.a = min(a_avoiding_smash_behind, self.max_acceleration)
+            else:
+              self.a = max(a_avoiding_smash_front, -self.max_acceleration)
 
-              print ("nearest behind : {}".format(nearest_behind))
-              nearest_behind = nearest_behind[1]
-              target_vel = nearest_behind[1]['s'] - nearest_behind[0]['s']
-              delta_v = self.v - target_vel
-              delta_s = self.s - nearest_behind[0]['s']
-              if delta_v != 0:
-                print ("delta_v {}".format(delta_v))
-                print ("delta_s {}".format(delta_s))
-                time = -2 * delta_s / delta_v
-                if time == 0:
-                  a = self.a
-                else:
-                  a = delta_v / time
-                print ("raw a is {}".format(a))
-                if a > self.max_acceleration: a = self.max_acceleration
-                if a < -self.max_acceleration: a = -self.max_acceleration
-                self.a = a
-                print ("time : {}".format(time))
-                print ("a: {}".format(self.a))
-              else :
-                min_acc = max(-self.max_acceleration, -delta_s)
-                self.a = min_acc
+          def compatible_acceleration(self, trajectory, orientation):
+            if (0 < len(trajectory)):
+              nearest = min(trajectory, key=lambda x: x[0]['s']) if orientation == "FRONT" else max(trajectory, key=lambda x: x[0]['s'])
+              other_velocity = nearest[1]['s'] - nearest[0]['s']
+              delta_v = (other_velocity - self.v) if orientation == "FRONT" else (self.v - other_velocity)
+              if delta_v < 0:           # incompatible velocity, there will be eventually collision
+                delta_s = (nearest[0]['s'] - self.s) if orientation == "FRONT" else (self.s - nearest[0]['s'])
+                if 0 < delta_s:
+                  time = -2 * delta_s / delta_v
+                  return -2 * delta_v / time, delta_s
+                else:                   # already crashed! Let collision avoidance to take care of it.
+                  return None
+              else:
+                return None  # no worry, can keep the current acceleration
+            else:
+              return None # no worry, can keep the current acceleration
 
           def generate_predictions(self, horizon=10):
             predictions = []
@@ -803,9 +891,9 @@ Path planning consists of:
         # priority levels for costs
         COLLISION  = 10 ** 6
         DANGER     = 10 ** 5
-        REACH_GOAL = 10 ** 5
+        REACH_GOAL = 10 ** 6            # 5 increase to avoid too much changing lane when near the goal
         COMFORT    = 10 ** 4
-        EFFICENCY  = 10 ** 4 # 2
+        EFFICENCY  = 10 ** 2 # 2 EFFICENCY can not be too high to encourage too much lane change.
 
         DESIRED_BUFFER = 1.5            # time stamps
         PLANNING_HORIZON = 2
@@ -830,9 +918,6 @@ Path planning consists of:
                 cost += new_cost
             return cost
 
-            pass
-
-
         # Cost functions:
         def distance_from_goal_lane(vehicle, trajectory, predictions, data):
             """
@@ -840,14 +925,15 @@ Path planning consists of:
             proportional to the number of lanes away from the goal lane;
             inversely proportional to the travel time to the goal
             """
-            distance = abs(data.end_distance_to_goal)
-            distance = max(distance, 1.0)
-            time_to_goal = float(distance) / data.avg_speed
-            lanes = data.end_lanes_from_goal
-            multiplier = float(5 * lanes / time_to_goal)
-            cost = multiplier * REACH_GOAL
-            return cost
-            pass
+            if data.avg_speed == 0:
+                multiplier = 5          # very abnormal situation reject the associated state
+            else:
+                distance = abs(data.end_distance_to_goal)
+                # distance = max(distance, 1.0)
+                time_to_goal = float(distance) / data.avg_speed
+                lanes = data.end_lanes_from_goal
+                multiplier = float(5 * lanes / time_to_goal) if time_to_goal != 0 else 0
+            return multiplier * REACH_GOAL
 
         def inefficiency_cost(vehicle, trajectory, predictions, data):
             """
@@ -857,7 +943,6 @@ Path planning consists of:
                      /vehicle.target_speed)**2
             ) * EFFICENCY
             return cost
-            pass
 
         def collision_cost(vehicle, trajectory, predictions, data):
             """
@@ -876,7 +961,7 @@ Path planning consists of:
             When there is sufficient buffer, cost 0.
             Else, the cost is closer to 1 (the maximum), when the buffer is closer to 0.
             """
-            if data.closest_approach == 0:
+            if data.closest_approach == 0 or data.avg_speed == 0:
                 return 10 * DANGER
             else:
                 timesteps_away = data.closest_approach / data.avg_speed
@@ -885,27 +970,36 @@ Path planning consists of:
                 else:
                     return (1.0 - (timesteps_away - DESIRED_BUFFER)**2) * DANGER
 
+        # def change_lane_cost(vehicle, trajectory, predictions, data):
+        #     """
+        #     Penalizes lance changes AWAY from the goal lane and rewards lane changes TOWARDS the goal line.
+        #     """
+        #     cost = 0
+        #     proposed_lane = data.end_lanes_from_goal
+        #     cur_lanes = trajectory[0].lane
+        #     if cur_lanes < proposed_lane:
+        #         cost = COMFORT
+        #     elif proposed_lane < cur_lanes:
+        #         cost = -COMFORT
+        #     if cost != 0:
+        #         print("!! \n \ncost for lane change is {}\n\n".format(cost))
+        #     return cost
         def change_lane_cost(vehicle, trajectory, predictions, data):
             """
             Penalizes lance changes AWAY from the goal lane and rewards lane changes TOWARDS the goal line.
             """
             cost = 0
-            proposed_lane = data.end_lanes_from_goal
-            cur_lanes = trajectory[0].lane
-            if cur_lanes < proposed_lane:
-                cost = COMFORT
-            elif proposed_lane < cur_lanes:
-                cost = -COMFORT
-            if cost != 0:
-                print("!! \n \ncost for lane change is {}\n\n".format(cost))
+            time_to_goal = data.end_distance_to_goal/data.avg_speed if data.avg_speed != 0 else 1
+            cost = COMFORT* abs(data.end_lanes_from_goal)/time_to_goal if time_to_goal != 0 else COMFORT* abs(data.end_lanes_from_goal)
             return cost
-
 
         # Support functions:
         def get_helper_data(vehicle, trajectory, predictions):
             """
             Compute TrajectoryData
             """
+            # current_snapshot, first_snapshot, and last_snapshot,
+            # are the positions of Ego
             current_snapshot = trajectory[0]
             first_snapshot = trajectory[1]
             last_snapshot = trajectory[-1]
@@ -915,28 +1009,27 @@ Path planning consists of:
 
             proposed_lane = first_snapshot.lane
             avg_speed = (last_snapshot.s - current_snapshot.s)/delta_time
-
+            # as long as the horizon for trajectory is greater than 1, and acceleration or speed is not 0,
+            # the avg_speed should not be 0.
+            # assert avg_speed != 0, print("avg_speed should not be zero! {}, lsat_snapshot.s: {}, current_snapshot.s: {}".format(avg_speed, last_snapshot.s, current_snapshot.s, delta_time))
             accels = []
             closest_approach = 999999
-            collides = False
-            last_snap = trajectory[0]
-            filtered = filter_predictions_by_lane(predictions, proposed_lane)
+            collides = None
+            trajectory_same_lane = filter_predictions_by_lane(predictions, proposed_lane)
 
-            for i, snapshot in enumerate(trajectory[1:PLANNING_HORIZON+1], 1):
-                lane, s, v, a = unpack_snapshot(snapshot)
-                accels.append(a)
-                for v_id, v in filtered.items():
-                    state = v[i]
-                    last_state = v[i-1]
+            for time_step, snapshot in enumerate(trajectory[1:PLANNING_HORIZON+1], 1):  # let the i index start from 1
+                lane, s, v, a = unpack_snapshot(snapshot)                       # trajectory is of Ego only
+                accels.append(a)        # collects all the accelerations
+                for v_id, trajectory_other_vehicle in trajectory_same_lane.items():
+                    state = trajectory_other_vehicle[time_step]
+                    last_state = trajectory_other_vehicle[time_step-1]
                     vehicle_colides = check_collision(snapshot, last_state['s'], state['s'])
                     if vehicle_colides:
-                        # collides = True
-                        collides = {"at": i}
+                        collides = collides or {"at": time_step}  # only update collides if it's empty
                     dist = abs(state['s'] - s)
                     if dist < closest_approach:
                         closest_approach = dist
-                last_snap = snapshot
-            max_accel = max(accels, key=lambda a: abs(a))
+            max_acceleration = max(accels, key=lambda a: abs(a))
             rms_accels = [a**2 for a in accels]
             num_accels = len(rms_accels)
             rms_acceleration = float(sum(rms_accels))/num_accels
@@ -944,7 +1037,7 @@ Path planning consists of:
             return TrajectoryData(
                 proposed_lane,
                 avg_speed,
-                max_accel,
+                max_acceleration,
                 rms_acceleration,
                 closest_approach,
                 end_distance_to_goal,
@@ -954,15 +1047,17 @@ Path planning consists of:
 
         def check_collision(snapshot, s_previous, s_now):
             """
-            ??
-            Need to clarify the meaning of the parameters first.
+            snapshot: the snapshot of Ego at the time now
+            s_previous: the s position of the other vehicle being compared at the last time step.
+            s_now: the s position of the other vehicle at the time now
+            Check if there is collision with Ego and the other vehicle.
             """
             if s_previous < snapshot.s:
-                return snapshot.s <= s_now
+                return snapshot.s <= s_now  # the other vehicle rush from behind
             if snapshot.s < s_previous:
-                return s_now <= snapshot.s
+                return s_now <= snapshot.s  # Ego rushs from behind
             if snapshot.s == s_previous:
-                return (s_now - s_previous) <= snapshot.v
+                return (s_now - s_previous) <= snapshot.v  # the other vehicle moves slower than Ego that Ego may rush from behind and over take.
             raise ValueError
 
         def filter_predictions_by_lane(predictions, lane):
@@ -977,7 +1072,7 @@ Path planning consists of:
       #+END_SRC
 
 ***** Sketch to update_state algorithm
-
+      The following may be outdated.
       #+NAME:state_transition_pseudo
       #+BEGIN_SRC python :noweb yes :tangle :exports none
         if goal_lane == vehicle.lane:
@@ -990,13 +1085,19 @@ Path planning consists of:
       
 
 
+***** New problem, sometimes, Ego may not come back to the goal lane in time.
+      It seems that the weight for the cost of being away from the goal lane is not enough, when the distance to goal is small.
+      Actually, there is not enough cost (penalty) to changing lane when the time to the goal is very small.
+      After adding the cost of such changing lane, the problem seems gone.
+
+
 *** Implementation in C++
 
     High lever control of the road simulation with ego vehicle.
 
     #+NAME:main-behavior-planner
-    #+BEGIN_SRC C++ :noweb yes :tangle :exports none
-          #include "road.h"
+    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/sandbox.cpp :exports none
+      #include "road.h"
       #include "vehicle.h"
       #include <iostream>
       #include <fstream>
@@ -1022,7 +1123,7 @@ Path planning consists of:
       vector<int> GOAL = {300, 0};
 
       // These affect the visualization
-      int FRAMES_PER_SECOND = 4;
+      int FRAMES_PER_SECOND = 1; // 4;
       int AMOUNT_OF_ROAD_VISIBLE = 40;
 
       int main() {
@@ -1073,7 +1174,7 @@ Path planning consists of:
 
     The declaration of class Vehicle
     #+NAME:vehicle.h
-    #+BEGIN_SRC C++ :noweb yes :tangle :exports none
+    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/vehicle.h :exports none :main no
       #ifndef VEHICLE_H
       #define VEHICLE_H
       #include <iostream>
@@ -1087,6 +1188,17 @@ Path planning consists of:
       #include <iterator>
 
       using namespace std;
+
+      struct TrajectoryData {
+        int proposed_lane;
+        float avg_speed;
+        float max_acceleration;
+        float rms_acceleration;
+        float closest_approach;
+        float end_distance_to_goal;
+        int end_lanes_from_goal;
+        map<string, int> collides;
+      };
 
       class Vehicle {
       public:
@@ -1111,8 +1223,9 @@ Path planning consists of:
         /**
         ,* Constructor
         ,*/
+        Vehicle() {};                 // try adding to overcome the error related to slicing of vecotor<Vehicle>
         Vehicle(int lane, int s, int v, int a);
-
+        Vehicle(const Vehicle & a_vehicle);
         /**
         ,* Destructor
         ,*/
@@ -1132,6 +1245,10 @@ Path planning consists of:
         void realize_lane_change(map<int,vector< vector<int> > > predictions, string direction);
         void realize_prep_lane_change(map<int,vector< vector<int> > > predictions, string direction);
         vector<vector<int> > generate_predictions(int horizon);
+        vector<Vehicle> _trajectory_for_state(string proposed_state, map<int, vector < vector<int> > > predictions_copy, int horizon);
+        float calculate_cost(vector<Vehicle> trajectory, map<int, vector < vector<int> > > predictions);
+        TrajectoryData get_cost_data(vector<Vehicle> trajectory,
+                                     map<int, vector < vector<int> > > predictions);
       };
       #endif
     #+END_SRC
@@ -1148,8 +1265,9 @@ Path planning consists of:
     max_acceleration = road_data[4];
 
     #+NAME:vehicle.cpp
-    #+BEGIN_SRC C++ :noweb yes :tangle :exports none
+    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/vehicle.cpp :exports none :main no
       #include <iostream>
+      #include <algorithm>
       #include "vehicle.h"
       #include <iostream>
       #include <math.h>
@@ -1171,7 +1289,167 @@ Path planning consists of:
 
       Vehicle::~Vehicle() {}
 
+      Vehicle::Vehicle(const Vehicle & a_vehicle) {
+        this->lane = a_vehicle.lane;
+        this->s = a_vehicle.s;
+        this->v = a_vehicle.v;
+        this->a = a_vehicle.a;
+        this->state = a_vehicle.state;
+      }
+
       // TODO - Implement this method.
+      void vector_remove(vector<string> & a_vector, string value) {
+        a_vector.erase(std::remove(a_vector.begin(), a_vector.end(), value), a_vector.end());
+      }
+
+      vector<Vehicle> Vehicle::_trajectory_for_state(string proposed_state,
+                                                     map<int, vector < vector<int> > > predictions_copy,
+                                                     int horizon=5) {
+        // Based on predictions and the proposed state, produces hypothetically trajectory,
+        // if the state were changed to the proposed state.
+
+        Vehicle vehicle_hypothetical = Vehicle(*this); // use this to explore hypothetical trajectory,
+        // what's the use of this vehicle_hypothetical? It seems that it's been used in the computation.
+        // Or it would be the same as the next vehicle_scratch
+        vehicle_hypothetical.state = proposed_state;
+        vector<Vehicle> trajectory;
+        trajectory.push_back(vehicle_hypothetical);
+        for (int time_step = 0; time_step < horizon; ++time_step) {
+          Vehicle vehicle_scratch = Vehicle(*this);
+          vehicle_scratch.state = proposed_state;
+          vehicle_scratch.realize_state(predictions_copy);
+          vehicle_scratch.increment(1);
+          trajectory.push_back(vehicle_scratch);
+          for (auto kv:predictions_copy) {
+            kv.second.erase(kv.second.begin());
+            // This operation is O(n) complexity not constant, n is the number of elements in the vector. May be optimized by replacing vector as dequeue
+          }
+        }
+        return trajectory;         // dumpy for compilation
+      }
+
+      template <typename T>
+      typename T::iterator min_map_element(T& m) {
+        return min_element(m.begin(), m.end(),
+                           [](typename T::value_type& l,
+                              typename T::value_type& r) -> bool { return l.second < r.second; });
+      }
+
+      typedef float (*CostFunction)(vector<Vehicle> trajectory,
+                                    map<int, vector < vector<int> > > predictions,
+                                    TrajectoryData);
+
+      CostFunction distance_from_goal_lane;
+      CostFunction inefficiency_cost;
+      CostFunction collision_cost;
+      CostFunction buffer_cost;
+      CostFunction change_lane_cost;
+
+      vector<CostFunction> cost_functions = {
+        distance_from_goal_lane,
+        inefficiency_cost,
+        collision_cost,
+        buffer_cost,
+        change_lane_cost
+      };
+
+      map<int, vector < vector<int> > > filter_by_lane(map<int, vector < vector<int> > > predictions,
+                                                       int proposed_lane) {
+        map<int, vector < vector<int> > > filtered;
+        for (auto kv:predictions) {
+          if ((kv.first != -1) && (kv.second[0][0] == proposed_lane)) { // lane is at the index 0 of a prediction record
+            filtered[kv.first] = kv.second;
+          }
+        }
+        return filtered;
+      }
+
+      template <typename T>
+      vector<T> slice(const vector<T>& v, int start=0, int end=-1) {
+        int oldlen = v.size();
+        int newlen;
+
+        if (end == -1 or end >= oldlen){
+          newlen = oldlen-start;      // towards the end
+        } else {
+          newlen = end-start;
+        }
+
+        vector<T> nv(newlen);
+
+        for (int i=0; i<newlen; i++) {
+          nv[i] = v[start+i];
+        }
+        return nv;
+      }
+
+      // priority levels for costs
+      float COLLISION  = pow(10, 6);
+      float DANGER     = pow(10, 5);
+      float REACH_GOAL = pow(10, 6); // 5 increase to avoid too much changing lane when near the goal
+      float COMFORT    = pow(10, 4);
+      float EFFICENCY  = pow(10, 2); // 2 EFFICENCY can not be too high to encourage too much lane change.
+      float DESIRED_BUFFER = 1.5; // time stamps
+      int PLANNING_HORIZON = 2;
+
+      bool check_collision(Vehicle snapshot, float s_previous, float s_now) {
+       // snapshot: the snapshot of Ego at the time now
+       //    s_previous: the s position of the other vehicle being compared at the last time step.
+       //   s_now: the s position of the other vehicle at the time now
+       //   Check if there is collision with Ego and the other vehicle.
+        if (s_previous < snapshot.s) return (snapshot.s <= s_now); // the other vehicle rush from behind
+        if (snapshot.s < s_previous) return (s_now <= snapshot.s); // Ego rushs from behind
+        if (snapshot.s == s_previous) return ((s_now - s_previous) <= snapshot.v); // the other vehicle moves slower than Ego that Ego may rush from behind and over take.
+      }
+
+      TrajectoryData Vehicle::get_cost_data(vector<Vehicle> trajectory,
+                                   map<int, vector < vector<int> > > predictions) {
+        // Compute the cost data needed to compute the costs
+        TrajectoryData cost_data;
+        Vehicle current_snapshot       = trajectory[0];
+        Vehicle next_snapshot          = trajectory[1];
+        Vehicle last_snapshot          = trajectory.back();
+        cost_data.end_distance_to_goal = this->goal_s - last_snapshot.s;
+        cost_data.end_lanes_from_goal  = abs(this->goal_lane - last_snapshot.lane);
+        cost_data.proposed_lane        = next_snapshot.lane;
+        cost_data.collides              = {};
+        int delta_time = float(trajectory.size());
+        cost_data.avg_speed            = (last_snapshot.s - current_snapshot.s)/delta_time;
+        float closest_approach = 999999;
+        map<int, vector < vector<int> > > predictions_same_lane
+          = filter_by_lane(predictions, next_snapshot.lane);
+
+        int time_step = 1;            // starts at time_step 1
+        vector<Vehicle> trajectory_sliced = slice(trajectory, 1, PLANNING_HORIZON+1);
+        for (auto snapshot:trajectory_sliced) {
+          for (auto v_id_trajectory:predictions_same_lane) {
+            vector<int> state = v_id_trajectory.second[time_step];
+            vector<int> last_state = v_id_trajectory.second[time_step-1];
+            if (check_collision(snapshot, last_state[1], state[1])) {
+              if (cost_data.collides.empty()) cost_data.collides["at"] = time_step;
+            }
+            float dist = abs(state[1] - snapshot.s);
+            if (dist < cost_data.closest_approach) {
+              cost_data.closest_approach = dist;
+            }
+          }
+          // ignore cost_data.max_acceleration and cost_data.rms_acceleration, as they are not used.
+        }
+        return cost_data;
+      }
+
+      float Vehicle::calculate_cost(vector<Vehicle> trajectory,
+                                    map<int, vector < vector<int> > > predictions) {
+        TrajectoryData cost_data = get_cost_data(trajectory, predictions);
+        float cost = 0.0;
+        float additional_cost;
+        for (auto f:cost_functions) {
+          additional_cost = f(trajectory, predictions, cost_data);
+          cost += additional_cost;
+        }
+        return cost;
+      }
+
       void Vehicle::update_state(map<int,vector < vector<int> > > predictions) {
         /*
           Updates the "state" of the vehicle by assigning one of the
@@ -1206,9 +1484,25 @@ Path planning consists of:
           }
 
           ,*/
-          state = "KL"; // this is an example of how you change state.
-
-
+        vector<string> states = { "KL", "LCL", "LCR", "PLCL", "PLCR" };
+        // remove the impossible states
+        state = "KL"; // this is an example of how you change state.
+        if (this->lane == 0) {        // no more lane reduction, right turn
+          vector_remove(states, "LCR");
+          vector_remove(states, "PLCR");
+        }
+        if (this->lane == (this->lanes_available - 1)) { // no more lane addition, left turn
+          vector_remove(states, "LCL");
+          vector_remove(states, "PLCL");
+        }
+        map<string, float> costs;     // costs is a map from the state to the corresponding cost
+        for (auto proposed_state:states) {
+          map<int, vector < vector<int> > > predictions_copy = predictions; // assume this would be deep copy
+          vector<Vehicle> trajectory = _trajectory_for_state(proposed_state, predictions_copy, 5);
+          float cost = calculate_cost(trajectory, predictions);
+          costs[proposed_state] = cost;
+        }
+        string lowest_cost_state = min_map_element(costs)->first;
       }
 
       void Vehicle::configure(vector<int> road_data) {
@@ -1236,15 +1530,15 @@ Path planning consists of:
       }
 
       void Vehicle::increment(int dt = 1) {
-
         this->s += this->v * dt;
-          this->v += this->a * dt;
+        this->v += this->a * dt;
       }
 
       vector<int> Vehicle::state_at(int t) {
 
         /*
           Predicts state of vehicle in t seconds (assuming constant acceleration)
+          returns a vector of lane, s, v, a
           ,*/
           int s = this->s + this->v * t + this->a * t * t / 2;
           int v = this->v + this->a * t;
@@ -1329,7 +1623,7 @@ Path planning consists of:
         map<int, vector<vector<int> > >::iterator it = predictions.begin();
         vector<vector<vector<int> > > in_front;
         while(it != predictions.end()) {
-            int v_id = it->first;
+            size_t v_id = it->first;
             vector<vector<int> > v = it->second;
             if((v[0][0] == lane) && (v[0][1] > s))
               {
@@ -1341,7 +1635,7 @@ Path planning consists of:
           {
             int min_s = 1000;
             vector<vector<int>> leading = {};
-            for(int i = 0; i < in_front.size(); i++)
+            for(size_t i = 0; i < in_front.size(); i++)
             {
               if((in_front[i][0][1]-s) < min_s)
               {
@@ -1386,7 +1680,7 @@ Path planning consists of:
           vector<vector<vector<int> > > at_behind;
           while(it != predictions.end())
           {
-            int v_id = it->first;
+            size_t v_id = it->first;
               vector<vector<int> > v = it->second;
 
               if((v[0][0] == lane) && (v[0][1] <= this->s))
@@ -1401,7 +1695,7 @@ Path planning consists of:
 
             int max_s = -1000;
             vector<vector<int> > nearest_behind = {};
-            for(int i = 0; i < at_behind.size(); i++)
+            for(size_t i = 0; i < at_behind.size(); i++)
             {
               if((at_behind[i][0][1]) > max_s)
               {
@@ -1437,17 +1731,16 @@ Path planning consists of:
       vector<vector<int> > Vehicle::generate_predictions(int horizon = 10) {
         vector<vector<int> > predictions;
           for( int i = 0; i < horizon; i++) {
-            vector<int> check1 = state_at(i);
-            vector<int> lane_s = {check1[0], check1[1]};
+            vector<int> check1 = state_at(i); // returns a vector of lane, s, v, a
+            vector<int> lane_s = {check1[0], check1[1]}; // extract lane, s
             predictions.push_back(lane_s);
           }
           return predictions;
       }
     #+END_SRC
 
-
     #+NAME:road.h
-    #+BEGIN_SRC C++ :noweb yes :tangle :exports none
+    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/road.h :exports none :main no
       #include <iostream>
       #include <random>
       #include <sstream>
@@ -1495,7 +1788,7 @@ Path planning consists of:
     #+END_SRC
 
     #+NAME:road.cpp
-    #+BEGIN_SRC C++ :noweb yes :tangle :exports none
+    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/road.cpp :exports none :main no
       #include <iostream>
       #include "road.h"
       #include "vehicle.h"
@@ -1609,7 +1902,7 @@ Path planning consists of:
         ostringstream oss;
         oss << "+Meters ======================+ step: " << timestep << endl;
         int i = s_min;
-        for(int lj = 0; lj < road.size(); lj++) {
+        for(size_t lj = 0; lj < road.size(); lj++) {
           if(i%20 ==0) {
             stringstream buffer;
             stringstream dis;
@@ -1622,7 +1915,7 @@ Path planning consists of:
             oss << "      ";
           }
           i++;
-          for(int li = 0; li < road[0].size(); li++) {
+          for(size_t li = 0; li < road[0].size(); li++) {
             oss << "|" << road[lj][li];
           }
           oss << "|";
@@ -1654,7 +1947,7 @@ Path planning consists of:
 
         map<int, Vehicle>::iterator it = this->vehicles.begin();
         while(it != this->vehicles.end()) {
-          int v_id = it->first;
+          size_t v_id = it->first;
           Vehicle v = it->second;
           vector<int> claim_pair = {v.lane,v.s};
           claimed.insert(claim_pair);
