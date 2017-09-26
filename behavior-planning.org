@@ -164,7 +164,7 @@ Path planning consists of:
        Compute the cost for each possible state, and select the next state with the lowest cost.
 
        #+NAME:optimal-move
-       #+BEGIN_SRC python :noweb yes :tangle :exports none
+       #+BEGIN_SRC python :noweb yes :tangle :exports code
          def transition_function(predictions, current_fsm_state, current_pose, cost_functions, weights):
              # only consider states which can be reached from current FSM state.
              possible_successor_states = successor_states(current_fsm_state)
@@ -348,6 +348,13 @@ Path planning consists of:
            (Not fully understood, may need to read further.)
 ******* Design of update_state
 
+        The intuition of behavior planning. Driving a vehicle is to accelerate in the lane where it is in or hypothetically changes into,
+        the maximum that the speed limit and the vehicle in front it allows, and the minimum the car behind it permits not being run into from behind.
+        The of the behavior planning is to calculate the relative positions, the speed, the acceleration of the closest car in front, and the back.
+        Together with the speed, acceleration, position of the vehicle being planned, the permitted acceleration can be calculated,
+        and options of decision can be compared, and the lowest cost can be selected. This intuition is best depicted by a diagram below.
+
+
         There is little state machine logic, as from each state, it's possible to transition to every other state, including the current state.
         So the design is to consider all the possible states from the current state, which all the states. Then filtered out the impossible ones according to the current lane.
         When the current lane is 0, the lowest, there is no way to reduce the lane number.
@@ -429,7 +436,7 @@ Path planning consists of:
 
 ***** The top level functions
       #+NAME:simulate_behavior.py
-      #+BEGIN_SRC python :noweb yes :tangle ./behavior-planner-python_3/behavior-planner-practice/simulate_behavior.py :exports none
+      #+BEGIN_SRC python :noweb yes :tangle ./behavior-planner-python_3/behavior-planner-practice/simulate_behavior.py :exports code
         #!/usr/bin/env python
         from road import Road
         import time
@@ -488,7 +495,7 @@ Path planning consists of:
 ***** Road: implementation
 
       #+NAME:road.py
-      #+BEGIN_SRC python :noweb yes :tangle ./behavior-planner-python_3/behavior-planner-practice/road.py :exports none
+      #+BEGIN_SRC python :noweb yes :tangle ./behavior-planner-python_3/behavior-planner-practice/road.py :exports code
         import random
         from vehicle import Vehicle
         import pdb
@@ -620,7 +627,7 @@ Path planning consists of:
 ***** Vehicle: implementation
 
       #+NAME:vehicle.py
-      #+BEGIN_SRC python :noweb yes :tangle  ./behavior-planner-python_3/behavior-planner-practice/vehicle.py :exports none
+      #+BEGIN_SRC python :noweb yes :tangle  ./behavior-planner-python_3/behavior-planner-practice/vehicle.py :exports code
         from cost_functions import calculate_cost
         from collections import namedtuple
         from copy import deepcopy
@@ -871,7 +878,7 @@ Path planning consists of:
       #+END_SRC
 ***** Cost_functions
       #+NAME:cost_functions
-      #+BEGIN_SRC python :noweb yes :tangle ./behavior-planner-python_3/behavior-planner-practice/cost_functions.py :exports none
+      #+BEGIN_SRC python :noweb yes :tangle ./behavior-planner-python_3/behavior-planner-practice/cost_functions.py :exports code
         from __future__ import division
         from collections import namedtuple
         from math import sqrt, exp
@@ -1096,13 +1103,14 @@ Path planning consists of:
     High lever control of the road simulation with ego vehicle.
 
     #+NAME:main-behavior-planner
-    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/sandbox.cpp :exports none
+    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/sandbox.cpp :exports code
       #include "road.h"
       #include "vehicle.h"
       #include <iostream>
       #include <fstream>
       #include <math.h>
       #include <vector>
+      #include <unistd.h>
 
       using namespace std;
 
@@ -1120,61 +1128,49 @@ Path planning consists of:
       int MAX_ACCEL = 2;
 
       // s value and lane number of goal.
-      vector<int> GOAL = {300, 0};
+      vector<int> GOAL = {300, 0}; // s, lane
 
       // These affect the visualization
       int FRAMES_PER_SECOND = 1; // 4;
       int AMOUNT_OF_ROAD_VISIBLE = 40;
 
       int main() {
-
         Road road = Road(SPEED_LIMIT, TRAFFIC_DENSITY, LANE_SPEEDS);
-
         road.update_width = AMOUNT_OF_ROAD_VISIBLE;
-
         road.populate_traffic();
-
-        int goal_s = 300;
-        int goal_lane = 0;
-
         //configuration data: speed limit, num_lanes, goal_s, goal_lane, max_acceleration
-
         int num_lanes = LANE_SPEEDS.size();
-        vector<int> ego_config = {SPEED_LIMIT,num_lanes,goal_s,goal_lane,MAX_ACCEL};
+        vector<int> ego_config = {SPEED_LIMIT, num_lanes, GOAL[0], GOAL[1], MAX_ACCEL};
 
-        road.add_ego(2,0, ego_config);
+        road.add_ego(3, 0, ego_config); // start lane, start s, ego_config
         int timestep = 0;
+        int timestep_limit = 150; // 35 may need to be larger, say 150
 
         while (road.get_ego().s <= GOAL[0]) {
+        // note road.get_ego() returns a copy of the ego at the time of calling, passed by value, so it must be evaluated every while loop.
           timestep++;
-          if (timestep > 35) {
+          if (timestep_limit < timestep) {
+            cout << "Taking too long to reach the goal. Go faster!" << endl;
             break;
           }
           road.advance();
           road.display(timestep);
-          //time.sleep(float(1.0) / FRAMES_PER_SECOND);
+          // time.sleep(float(1.0) / FRAMES_PER_SECOND);
+          sleep(1);
         }
         Vehicle ego = road.get_ego();
-        if (ego.lane == GOAL[1])
-        {
-          cout << "You got to the goal in " << timestep << " seconds!" << endl;
-          if(timestep > 35)
-            {
-                cout << "But it took too long to reach the goal. Go faster!" << endl;
-            }
-        }
-        else
-        {
+        if (ego.lane == GOAL[1]) {
+          if (GOAL[0] <= ego.s) cout << "You got to the goal in " << timestep << " seconds!" << endl;
+        } else {
           cout << "You missed the goal. You are in lane " << ego.lane << " instead of " << GOAL[1] << "." << endl;
         }
-
         return 0;
       }
     #+END_SRC
 
     The declaration of class Vehicle
     #+NAME:vehicle.h
-    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/vehicle.h :exports none :main no
+    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/vehicle.h :exports code :main no
       #ifndef VEHICLE_H
       #define VEHICLE_H
       #include <iostream>
@@ -1225,7 +1221,7 @@ Path planning consists of:
         ,*/
         Vehicle() {};                 // try adding to overcome the error related to slicing of vecotor<Vehicle>
         Vehicle(int lane, int s, int v, int a);
-        Vehicle(const Vehicle & a_vehicle);
+        // Vehicle(const Vehicle & a_vehicle);
         /**
         ,* Destructor
         ,*/
@@ -1265,7 +1261,7 @@ Path planning consists of:
     max_acceleration = road_data[4];
 
     #+NAME:vehicle.cpp
-    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/vehicle.cpp :exports none :main no
+    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/vehicle.cpp :exports code :main no
       #include <iostream>
       #include <algorithm>
       #include "vehicle.h"
@@ -1289,13 +1285,13 @@ Path planning consists of:
 
       Vehicle::~Vehicle() {}
 
-      Vehicle::Vehicle(const Vehicle & a_vehicle) {
-        this->lane = a_vehicle.lane;
-        this->s = a_vehicle.s;
-        this->v = a_vehicle.v;
-        this->a = a_vehicle.a;
-        this->state = a_vehicle.state;
-      }
+      // Vehicle::Vehicle(const Vehicle & a_vehicle) {
+      //   this->lane = a_vehicle.lane;
+      //   this->s = a_vehicle.s;
+      //   this->v = a_vehicle.v;
+      //   this->a = a_vehicle.a;
+      //   this->state = a_vehicle.state;
+      // }
 
       // TODO - Implement this method.
       void vector_remove(vector<string> & a_vector, string value) {
@@ -1335,23 +1331,9 @@ Path planning consists of:
                               typename T::value_type& r) -> bool { return l.second < r.second; });
       }
 
-      typedef float (*CostFunction)(vector<Vehicle> trajectory,
+      typedef float (*CostFunction)(Vehicle vehicle, vector<Vehicle> trajectory,
                                     map<int, vector < vector<int> > > predictions,
                                     TrajectoryData);
-
-      CostFunction distance_from_goal_lane;
-      CostFunction inefficiency_cost;
-      CostFunction collision_cost;
-      CostFunction buffer_cost;
-      CostFunction change_lane_cost;
-
-      vector<CostFunction> cost_functions = {
-        distance_from_goal_lane,
-        inefficiency_cost,
-        collision_cost,
-        buffer_cost,
-        change_lane_cost
-      };
 
       map<int, vector < vector<int> > > filter_by_lane(map<int, vector < vector<int> > > predictions,
                                                        int proposed_lane) {
@@ -1400,6 +1382,7 @@ Path planning consists of:
         if (s_previous < snapshot.s) return (snapshot.s <= s_now); // the other vehicle rush from behind
         if (snapshot.s < s_previous) return (s_now <= snapshot.s); // Ego rushs from behind
         if (snapshot.s == s_previous) return ((s_now - s_previous) <= snapshot.v); // the other vehicle moves slower than Ego that Ego may rush from behind and over take.
+        return false;
       }
 
       TrajectoryData Vehicle::get_cost_data(vector<Vehicle> trajectory,
@@ -1412,10 +1395,10 @@ Path planning consists of:
         cost_data.end_distance_to_goal = this->goal_s - last_snapshot.s;
         cost_data.end_lanes_from_goal  = abs(this->goal_lane - last_snapshot.lane);
         cost_data.proposed_lane        = next_snapshot.lane;
-        cost_data.collides              = {};
+        cost_data.collides             = {};
         int delta_time = float(trajectory.size());
         cost_data.avg_speed            = (last_snapshot.s - current_snapshot.s)/delta_time;
-        float closest_approach = 999999;
+        cost_data.closest_approach     = 999999;
         map<int, vector < vector<int> > > predictions_same_lane
           = filter_by_lane(predictions, next_snapshot.lane);
 
@@ -1438,13 +1421,115 @@ Path planning consists of:
         return cost_data;
       }
 
+      float _distance_from_goal_lane(Vehicle vehicle, vector<Vehicle> trajectory,
+                                     map<int, vector < vector<int> > > predictions,
+                                     TrajectoryData data) {
+        // cost = REACH_GOAL * (5*data.end_lanes_from_goal/(abs(data.end_distance_to_goal)/data.avg_speed))
+        //   proportional to the number of lanes away from the goal lane;
+        // inversely proportional to the travel time to the goal
+        float multiplier = 0.0;
+        if (data.avg_speed == 0) { // very abnormal situation reject the associated state
+          multiplier = 5;
+        } else {
+          float time_to_goal = float(abs(data.end_distance_to_goal)) / data.avg_speed;
+          if (time_to_goal != 0) {
+            multiplier = float(5 * data.end_lanes_from_goal) / time_to_goal;
+          } else {
+            multiplier = 0.0;
+          }
+        }
+        return multiplier * REACH_GOAL;
+      }
+
+      float _inefficiency_cost(Vehicle vehicle, vector<Vehicle> trajectory,
+                               map<int, vector < vector<int> > > predictions,
+                               TrajectoryData data) {
+        /*
+          Proportional to the difference to the target speed
+        ,*/
+        float cost = (pow(float(vehicle.target_speed - data.avg_speed)
+                          /vehicle.target_speed, 2)
+                      ) * EFFICENCY;
+        return cost;
+      }
+
+      float _collision_cost(Vehicle vehicle, vector<Vehicle> trajectory,
+                           map<int, vector < vector<int> > > predictions,
+                           TrajectoryData data) {
+        /*
+          Exponentially inverse to the time when collision happens.
+        ,*/
+        if (!data.collides.empty()) {
+          int time_til_collision = data.collides["at"];
+          float exponent = pow(float(time_til_collision), 2);
+          return exp(-exponent) * COLLISION;
+        } else {
+          return 0;
+        }
+      }
+
+      float _buffer_cost(Vehicle vehicle, vector<Vehicle> trajectory,
+                        map<int, vector < vector<int> > > predictions,
+                        TrajectoryData data) {
+        /*
+          The cost of lack of buffer between vehicles.
+          When there is sufficient buffer, cost 0.
+          Else, the cost is closer to 1 (the maximum), when the buffer is closer to 0.
+        ,*/
+        if ((data.closest_approach == 0) || (data.avg_speed == 0)) {
+          return 10 * DANGER;
+        } else {
+          float timesteps_away = data.closest_approach / data.avg_speed;
+          if (DESIRED_BUFFER < timesteps_away) {
+            return 0.0;
+          } else {
+            return (1.0 - pow(timesteps_away - DESIRED_BUFFER, 2)) * DANGER;
+          }
+        }
+      }
+
+      float _change_lane_cost(Vehicle vehicle, vector<Vehicle> trajectory,
+                             map<int, vector < vector<int> > > predictions,
+                             TrajectoryData data) {
+        /*
+          Penalizes lance changes AWAY from the goal lane and rewards lane changes TOWARDS the goal line.
+        ,*/
+        float cost = 0;
+        float time_to_goal = 1;
+        if (data.avg_speed != 0) {
+          time_to_goal = data.end_distance_to_goal/data.avg_speed;
+        } else {
+          time_to_goal = 1;
+        }
+        if (time_to_goal != 0) {
+          cost = COMFORT* abs(data.end_lanes_from_goal)/time_to_goal;
+        } else {
+          cost = COMFORT* abs(data.end_lanes_from_goal);
+        }
+        return cost;
+      }
+
+      CostFunction distance_from_goal_lane = & _distance_from_goal_lane;
+      CostFunction inefficiency_cost       = & _inefficiency_cost;
+      CostFunction collision_cost          = & _collision_cost;
+      CostFunction buffer_cost             = & _buffer_cost;
+      CostFunction change_lane_cost        = & _change_lane_cost;
+
+      vector<CostFunction> cost_functions = {
+        distance_from_goal_lane,
+        inefficiency_cost,
+        collision_cost,
+        buffer_cost,
+        change_lane_cost
+      };
+
       float Vehicle::calculate_cost(vector<Vehicle> trajectory,
                                     map<int, vector < vector<int> > > predictions) {
         TrajectoryData cost_data = get_cost_data(trajectory, predictions);
         float cost = 0.0;
         float additional_cost;
         for (auto f:cost_functions) {
-          additional_cost = f(trajectory, predictions, cost_data);
+          additional_cost = f(*this, trajectory, predictions, cost_data);
           cost += additional_cost;
         }
         return cost;
@@ -1502,7 +1587,18 @@ Path planning consists of:
           float cost = calculate_cost(trajectory, predictions);
           costs[proposed_state] = cost;
         }
-        string lowest_cost_state = min_map_element(costs)->first;
+        this->state = min_map_element(costs)->first;
+      }
+
+      int lane_delta(string direction) {
+        /*
+                  Right turn lane number -1;
+                  Left turn lane number +1
+        ,*/
+        if (direction == "R")
+          return -1;
+        else
+          return 1;
       }
 
       void Vehicle::configure(vector<int> road_data) {
@@ -1530,7 +1626,7 @@ Path planning consists of:
       }
 
       void Vehicle::increment(int dt = 1) {
-        this->s += this->v * dt;
+        this->s += this->v * dt + this->a * dt * dt / 2; // adding + this->a * dt * dt / 2 from state_at
         this->v += this->a * dt;
       }
 
@@ -1616,29 +1712,28 @@ Path planning consists of:
       }
 
       int Vehicle::_max_accel_for_lane(map<int,vector<vector<int> > > predictions, int lane, int s) {
-
-        int delta_v_til_target = target_speed - v;
+        /*
+          calculate the maximum acceleration permitted given the traffic and the lane.
+        ,*/
+        int delta_v_til_target = this->target_speed - this->v;
         int max_acc = min(max_acceleration, delta_v_til_target);
 
         map<int, vector<vector<int> > >::iterator it = predictions.begin();
         vector<vector<vector<int> > > in_front;
         while(it != predictions.end()) {
-            size_t v_id = it->first;
+          // size_t v_id = it->first;
             vector<vector<int> > v = it->second;
-            if((v[0][0] == lane) && (v[0][1] > s))
-              {
+            if((v[0][0] == lane) && (v[0][1] > s)) {
                 in_front.push_back(v);
               }
               it++;
           }
-        if(in_front.size() > 0)
-          {
+        if(in_front.size() > 0) {
             int min_s = 1000;
             vector<vector<int>> leading = {};
             for(size_t i = 0; i < in_front.size(); i++)
             {
-              if((in_front[i][0][1]-s) < min_s)
-              {
+              if((in_front[i][0][1]-s) < min_s) {
                 min_s = (in_front[i][0][1]-s);
                 leading = in_front[i];
               }
@@ -1657,48 +1752,27 @@ Path planning consists of:
       }
 
       void Vehicle::realize_lane_change(map<int,vector< vector<int> > > predictions, string direction) {
-        int delta = -1;
-          if (direction.compare("L") == 0)
-          {
-            delta = 1;
-          }
-          this->lane += delta;
-          int lane = this->lane;
-          int s = this->s;
-          this->a = _max_accel_for_lane(predictions, lane, s);
+        this->lane += lane_delta(direction);
+        this->a = _max_accel_for_lane(predictions, this->lane, this->s);
       }
 
       void Vehicle::realize_prep_lane_change(map<int,vector<vector<int> > > predictions, string direction) {
-        int delta = -1;
-          if (direction.compare("L") == 0)
-          {
-            delta = 1;
-          }
-          int lane = this->lane + delta;
-
-          map<int, vector<vector<int> > >::iterator it = predictions.begin();
-          vector<vector<vector<int> > > at_behind;
-          while(it != predictions.end())
-          {
-            size_t v_id = it->first;
-              vector<vector<int> > v = it->second;
-
-              if((v[0][0] == lane) && (v[0][1] <= this->s))
-              {
+        int lane = this->lane + lane_delta(direction);
+        map<int, vector<vector<int> > >::iterator it = predictions.begin();
+        vector<vector<vector<int> > > at_behind;
+        while(it != predictions.end()) {
+            // size_t v_id = it->first;
+            vector<vector<int> > v = it->second;
+            if((v[0][0] == lane) && (v[0][1] <= this->s)) {
                 at_behind.push_back(v);
-
               }
-              it++;
+            it++;
           }
-          if(at_behind.size() > 0)
-          {
-
+        if(at_behind.size() > 0) {
             int max_s = -1000;
             vector<vector<int> > nearest_behind = {};
-            for(size_t i = 0; i < at_behind.size(); i++)
-            {
-              if((at_behind[i][0][1]) > max_s)
-              {
+            for(size_t i = 0; i < at_behind.size(); i++) {
+              if((at_behind[i][0][1]) > max_s) {
                 max_s = at_behind[i][0][1];
                 nearest_behind = at_behind[i];
               }
@@ -1740,7 +1814,7 @@ Path planning consists of:
     #+END_SRC
 
     #+NAME:road.h
-    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/road.h :exports none :main no
+    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/road.h :exports code :main no
       #include <iostream>
       #include <random>
       #include <sstream>
@@ -1788,7 +1862,7 @@ Path planning consists of:
     #+END_SRC
 
     #+NAME:road.cpp
-    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/road.cpp :exports none :main no
+    #+BEGIN_SRC C++ :noweb yes :tangle ~/programming/cplusplus/sandbox/src/road.cpp :exports code :main no
       #include <iostream>
       #include "road.h"
       #include "vehicle.h"
@@ -1925,15 +1999,22 @@ Path planning consists of:
       }
 
       void Road::add_ego(int lane_num, int s, vector<int> config_data) {
+        vector<int> to_removed_v_id;
         map<int, Vehicle>::iterator it = this->vehicles.begin();
         while(it != this->vehicles.end()) {
           int v_id = it->first;
           Vehicle v = it->second;
           if(v.lane == lane_num && v.s == s) {
-            this->vehicles.erase(v_id);
+            // this->vehicles.erase(v_id);
+            to_removed_v_id.push_back(v_id);
           }
           it++;
         }
+        // safer remove keys
+        for (auto v_id:to_removed_v_id) {
+          this->vehicles.erase(v_id);
+        }
+
         Vehicle ego = Vehicle(lane_num, s, this->lane_speeds[lane_num], 0);
         ego.configure(config_data);
         ego.state = "KL";
@@ -1947,7 +2028,7 @@ Path planning consists of:
 
         map<int, Vehicle>::iterator it = this->vehicles.begin();
         while(it != this->vehicles.end()) {
-          size_t v_id = it->first;
+          // size_t v_id = it->first;
           Vehicle v = it->second;
           vector<int> claim_pair = {v.lane,v.s};
           claimed.insert(claim_pair);
